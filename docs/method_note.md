@@ -113,3 +113,25 @@ only by a larger effective learning rate.
 Interpretation: the segment memory term improves the SGFR-to-LoRA translation.
 The KL term helps in the stricter 32-sample setting, but at 64 samples it should
 be reduced or scheduled down.
+
+## Fixed-Update Budget Findings
+
+Using a fixed budget of about 32 optimizer updates changes the low-data story
+and is a fairer protocol than one epoch per sample count:
+
+- 8 train samples, 64 eval samples, three seeds:
+  - Standard LoRA mean NLL: 2.6083.
+  - Wake scheduled mean NLL: 2.0148.
+- 16 train samples, 64 eval samples, three seeds:
+  - Standard LoRA mean NLL: 1.8573.
+  - Wake scheduled mean NLL: 1.7904.
+- 32 train samples, 64 eval samples, three seeds:
+  - Standard LoRA mean NLL: 1.6055.
+  - Strong Wake scheduled mean NLL: 1.6124.
+  - Segment-only Wake mean NLL: 1.6100.
+
+Interpretation: the current Wake losses clearly help in the extreme 8/16-sample
+regime, where standard LoRA overfits under equal update budget. At 32 samples,
+the same regularization is already too strong. The `wake_budget` schedule keeps
+the strong loss for 8/16 samples, disables KL above 16 samples, and decays the
+segment term with sample count.

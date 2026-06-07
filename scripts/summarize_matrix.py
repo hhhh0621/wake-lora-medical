@@ -71,6 +71,22 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
             result = data.get("results", {}).get(result_key)
             if not result:
                 continue
+            base = data.get("results", {}).get("base")
+            base_key = (group, sample, seed, "base")
+            if base and base_key not in seen:
+                seen.add(base_key)
+                rows.append(
+                    {
+                        "group": group,
+                        "sample_count": sample,
+                        "seed": seed,
+                        "method": "base",
+                        "nll": base["nll"],
+                        "perplexity": base["perplexity"],
+                        "tokens": base["tokens"],
+                        "path": rel_path,
+                    }
+                )
             key = (group, sample, seed, method)
             seen.add(key)
             rows.append(
@@ -97,6 +113,22 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
         data = read_json(path)
         if not data:
             continue
+        base = data.get("results", {}).get("base")
+        base_key = ("matrix", sample, seed, "base")
+        if base and base_key not in seen:
+            seen.add(base_key)
+            rows.append(
+                {
+                    "group": "matrix",
+                    "sample_count": sample,
+                    "seed": seed,
+                    "method": "base",
+                    "nll": base["nll"],
+                    "perplexity": base["perplexity"],
+                    "tokens": base["tokens"],
+                    "path": str(path.relative_to(ROOT)),
+                }
+            )
         result_key = "standard_lora" if method == "standard" else "wake_lora"
         result = data.get("results", {}).get(result_key)
         if not result:

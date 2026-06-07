@@ -40,6 +40,11 @@ METHODS = {
         "lambda_kl": "scheduled",
         "lambda_segment": "scheduled",
     },
+    "wake_budget": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "budget",
+        "lambda_segment": "budget",
+    },
     "wake_reliable": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": "scheduled",
@@ -120,6 +125,12 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             base_lambda=args.scheduled_base_kl,
             cutoff_samples=args.scheduled_kl_cutoff_samples,
         )
+    elif lambda_kl == "budget":
+        lambda_kl = scheduled_kl(
+            sample_count=samples,
+            base_lambda=args.budget_base_kl,
+            cutoff_samples=args.budget_kl_cutoff_samples,
+        )
     lambda_segment = spec["lambda_segment"]
     if lambda_segment == "scheduled":
         lambda_segment = scheduled_segment(
@@ -127,6 +138,13 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             base_lambda=args.scheduled_base_segment,
             ref_samples=args.scheduled_segment_ref_samples,
             power=args.scheduled_segment_power,
+        )
+    elif lambda_segment == "budget":
+        lambda_segment = scheduled_segment(
+            sample_count=samples,
+            base_lambda=args.budget_base_segment,
+            ref_samples=args.budget_segment_ref_samples,
+            power=args.budget_segment_power,
         )
     lambda_segment = float(lambda_segment)
     segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
@@ -204,6 +222,11 @@ def main() -> None:
     parser.add_argument("--scheduled_base_segment", type=float, default=0.005)
     parser.add_argument("--scheduled_segment_ref_samples", type=int, default=64)
     parser.add_argument("--scheduled_segment_power", type=float, default=2.0)
+    parser.add_argument("--budget_base_kl", type=float, default=0.1)
+    parser.add_argument("--budget_kl_cutoff_samples", type=int, default=16)
+    parser.add_argument("--budget_base_segment", type=float, default=0.005)
+    parser.add_argument("--budget_segment_ref_samples", type=int, default=16)
+    parser.add_argument("--budget_segment_power", type=float, default=2.0)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
