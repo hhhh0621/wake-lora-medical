@@ -139,3 +139,29 @@ PYTHONPATH=src /opt/conda/bin/python -m wake_lora.mcqa_eval \
 The current MedXpertQA 50-question sanity check is very low in absolute
 accuracy, so it should be treated as a hard external diagnostic, not as the main
 evidence for method quality.
+
+## Low-Data Matrix
+
+The next-stage experiment is driven by a reproducible matrix runner. It skips
+finished runs by default.
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
+  --samples 8,16,32,64,128 \
+  --seeds 42,43,44 \
+  --methods standard,wake_segment,wake_kl_segment,wake_adaptive
+```
+
+`wake_adaptive` uses the current sample-aware KL rule:
+
+```text
+lambda_kl(n) = 0.1,                         if n <= 32
+lambda_kl(n) = 0.1 * (32 / n)^2,            if n > 32
+lambda_segment = 0.005
+```
+
+After a run, summarize results without generating server-side HTML:
+
+```bash
+PYTHONPATH=src /opt/conda/bin/python scripts/summarize_matrix.py
+```
