@@ -149,7 +149,7 @@ finished runs by default.
 HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
   --samples 8,16,32,64,128 \
   --seeds 42,43,44 \
-  --methods standard,wake_segment,wake_kl_segment,wake_adaptive
+  --methods standard,wake_segment,wake_kl_segment,wake_scheduled
 ```
 
 `wake_adaptive` uses the current sample-aware KL rule:
@@ -158,6 +158,16 @@ HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/r
 lambda_kl(n) = 0.1,                         if n <= 32
 lambda_kl(n) = 0.1 * (32 / n)^2,            if n > 32
 lambda_segment = 0.005
+```
+
+`wake_scheduled` is the current preferred rule after the first 8/16/32/64/128
+probe:
+
+```text
+lambda_kl(n) = 0.1,                         if n <= 32
+lambda_kl(n) = 0,                           if n > 32
+lambda_segment(n) = 0.005,                  if n <= 64
+lambda_segment(n) = 0.005 * (64 / n)^2,     if n > 64
 ```
 
 After a run, summarize results without generating server-side HTML:

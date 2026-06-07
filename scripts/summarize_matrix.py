@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import statistics as st
 from pathlib import Path
 
@@ -53,7 +54,7 @@ def parse_matrix_name(path: Path) -> tuple[int, int, str] | None:
             break
     if sample is None or seed is None or not method_parts:
         return None
-    method_parts = [x for x in method_parts if not x.startswith("kl") and not x.startswith("seg")]
+    method_parts = [x for x in method_parts if not re.fullmatch(r"(kl|seg)[0-9p]+", x)]
     method = "_".join(method_parts)
     return sample, seed, method
 

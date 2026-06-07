@@ -35,6 +35,11 @@ METHODS = {
         "lambda_kl": "adaptive",
         "lambda_segment": 0.005,
     },
+    "wake_scheduled": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "scheduled",
+        "lambda_segment": "scheduled",
+    },
 }
 
 
@@ -51,6 +56,18 @@ def parse_method_list(text: str) -> list[str]:
 
 
 def adaptive_kl(sample_count: int, base_lambda: float, ref_samples: int, power: float) -> float:
+    if sample_count <= ref_samples:
+        return base_lambda
+    return base_lambda * (ref_samples / sample_count) ** power
+
+
+def scheduled_kl(sample_count: int, base_lambda: float, cutoff_samples: int) -> float:
+    if sample_count <= cutoff_samples:
+        return base_lambda
+    return 0.0
+
+
+def scheduled_segment(sample_count: int, base_lambda: float, ref_samples: int, power: float) -> float:
     if sample_count <= ref_samples:
         return base_lambda
     return base_lambda * (ref_samples / sample_count) ** power
@@ -83,7 +100,21 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             ref_samples=args.adaptive_ref_samples,
             power=args.adaptive_power,
         )
-    lambda_segment = float(spec["lambda_segment"])
+    elif lambda_kl == "scheduled":
+        lambda_kl = scheduled_kl(
+            sample_count=samples,
+            base_lambda=args.scheduled_base_kl,
+            cutoff_samples=args.scheduled_kl_cutoff_samples,
+        )
+    lambda_segment = spec["lambda_segment"]
+    if lambda_segment == "scheduled":
+        lambda_segment = scheduled_segment(
+            sample_count=samples,
+            base_lambda=args.scheduled_base_segment,
+            ref_samples=args.scheduled_segment_ref_samples,
+            power=args.scheduled_segment_power,
+        )
+    lambda_segment = float(lambda_segment)
     out_dir = ROOT / "outputs" / output_dir_name(args.output_prefix, samples, seed, method, float(lambda_kl), lambda_segment)
     cmd = [
         args.python_bin,
@@ -143,6 +174,11 @@ def main() -> None:
     parser.add_argument("--adaptive_base_kl", type=float, default=0.1)
     parser.add_argument("--adaptive_ref_samples", type=int, default=32)
     parser.add_argument("--adaptive_power", type=float, default=2.0)
+    parser.add_argument("--scheduled_base_kl", type=float, default=0.1)
+    parser.add_argument("--scheduled_kl_cutoff_samples", type=int, default=32)
+    parser.add_argument("--scheduled_base_segment", type=float, default=0.005)
+    parser.add_argument("--scheduled_segment_ref_samples", type=int, default=64)
+    parser.add_argument("--scheduled_segment_power", type=float, default=2.0)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
