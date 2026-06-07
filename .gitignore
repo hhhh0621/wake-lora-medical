@@ -1,0 +1,14 @@
+.cache/
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.jsonl
+*.pt
+*.pth
+*.safetensors
+outputs/
+runs/
+wandb/
+adapter_*/
+*.egg-info/
