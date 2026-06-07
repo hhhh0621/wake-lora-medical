@@ -135,3 +135,26 @@ regime, where standard LoRA overfits under equal update budget. At 32 samples,
 the same regularization is already too strong. The `wake_budget` schedule keeps
 the strong loss for 8/16 samples, disables KL above 16 samples, and decays the
 segment term with sample count.
+
+## Low-LR 8-Sample Update
+
+With 8 train samples, 64 eval samples, three seeds, 32 optimizer updates, and
+`learning_rate=1e-4`, both LoRA variants improve substantially over the direct
+base model:
+
+- Base mean NLL: 1.9395.
+- Standard LoRA mean final NLL: 1.7609.
+- Wake-budget mean final NLL: 1.7499.
+
+The win is small but seed-consistent. The epoch curves show a more important
+diagnostic: standard LoRA and Wake-budget both reach their best validation NLL
+around epochs 5-7, then drift upward. Wake-budget reduces the final-model drift,
+but its best-epoch NLL is still slightly worse than standard LoRA's best-epoch
+NLL. This means the current advantage is mostly late-training stabilization, not
+yet a stronger early optimum.
+
+The next variant, `wake_delayed`, tests that interpretation directly. It lets
+the LoRA adapter adapt under ordinary CE for the first 25% of optimizer updates,
+then linearly ramps Wake KL/segment regularization over the next 12.5% of
+updates. The intended behavior is to preserve standard LoRA's early plasticity
+while using Wake geometry as a late-stage anti-drift constraint.

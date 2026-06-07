@@ -121,6 +121,7 @@ class WakeLoraLoss:
         alpha_max: float = 2.0,
         ce_reuse_max: float = 2.0,
         temperature: float = 1.0,
+        collect_segment_features: bool = False,
     ) -> None:
         self.lambda_kl = lambda_kl
         self.lambda_ce_reuse = lambda_ce_reuse
@@ -131,10 +132,12 @@ class WakeLoraLoss:
         self.alpha_max = alpha_max
         self.ce_reuse_max = ce_reuse_max
         self.temperature = temperature
+        self.collect_segment_features = collect_segment_features
         self.segment_bank = TokenFeatureMemoryBank(memory_size=segment_memory_size)
 
     def __call__(self, model: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
-        outputs_lora = model(**batch, output_hidden_states=self.lambda_segment > 0)
+        needs_segment_features = self.lambda_segment > 0 or self.collect_segment_features
+        outputs_lora = model(**batch, output_hidden_states=needs_segment_features)
         logits_lora = outputs_lora.logits
         ce_lora_tok, mask = token_ce_loss(logits_lora, batch["labels"])
 
@@ -171,7 +174,7 @@ class WakeLoraLoss:
             "segment_memory_tokens": float(len(self.segment_bank.features)),
             "segment_reliable_ratio": 0.0,
         }
-        if self.lambda_segment > 0:
+        if needs_segment_features:
             hidden = outputs_lora.hidden_states[-1][:, :-1, :].contiguous()
             shift_labels = batch["labels"][:, 1:].contiguous()
             valid_hidden = hidden[mask].float()

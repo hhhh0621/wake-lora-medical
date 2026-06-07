@@ -45,6 +45,8 @@ def main() -> None:
         "lambda_segment": args.lambda_segment,
         "segment_memory_size": args.segment_memory_size,
         "segment_min_count": args.segment_min_count,
+        "wake_start_ratio": args.wake_start_ratio,
+        "wake_ramp_ratio": args.wake_ramp_ratio,
         "results": {},
     }
 

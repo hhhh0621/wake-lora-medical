@@ -39,6 +39,32 @@ def read_json(path: Path) -> dict | None:
         return None
 
 
+def read_best_eval(path: Path, result_key: str) -> tuple[int | None, float | None]:
+    metrics_path = path.parent / result_key / "eval_metrics.jsonl"
+    if not metrics_path.exists():
+        return None, None
+    rows = []
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    rows = [row for row in rows if "nll" in row]
+    if not rows:
+        return None, None
+    best = min(rows, key=lambda row: float(row["nll"]))
+    return best.get("epoch"), float(best["nll"])
+
+
+def best_gap(result: dict, path: Path, result_key: str) -> tuple[int | None, float, float]:
+    best_epoch, best_nll = read_best_eval(path, result_key)
+    if best_nll is None:
+        best_nll = float(result["nll"])
+    return best_epoch, best_nll, float(result["nll"]) - best_nll
+
+
 def parse_matrix_name(path: Path) -> tuple[int, int, str] | None:
     name = path.parent.name
     parts = name.split("_")
@@ -54,7 +80,7 @@ def parse_matrix_name(path: Path) -> tuple[int, int, str] | None:
             break
     if sample is None or seed is None or not method_parts:
         return None
-    method_parts = [x for x in method_parts if not re.fullmatch(r"(kl|seg)[0-9p]+", x)]
+    method_parts = [x for x in method_parts if not re.fullmatch(r"(kl|seg|ws|wr)[0-9p]+", x)]
     method = "_".join(method_parts)
     return sample, seed, method
 
@@ -84,11 +110,15 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
                         "nll": base["nll"],
                         "perplexity": base["perplexity"],
                         "tokens": base["tokens"],
+                        "best_epoch": None,
+                        "best_nll": base["nll"],
+                        "final_minus_best": 0.0,
                         "path": rel_path,
                     }
                 )
             key = (group, sample, seed, method)
             seen.add(key)
+            best_epoch, best_nll, gap = best_gap(result, path, result_key)
             rows.append(
                 {
                     "group": group,
@@ -98,6 +128,9 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
                     "nll": result["nll"],
                     "perplexity": result["perplexity"],
                     "tokens": result["tokens"],
+                    "best_epoch": best_epoch,
+                    "best_nll": best_nll,
+                    "final_minus_best": gap,
                     "path": rel_path,
                 }
             )
@@ -123,16 +156,20 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
                     "sample_count": sample,
                     "seed": seed,
                     "method": "base",
-                    "nll": base["nll"],
-                    "perplexity": base["perplexity"],
-                    "tokens": base["tokens"],
-                    "path": str(path.relative_to(ROOT)),
-                }
-            )
+                        "nll": base["nll"],
+                        "perplexity": base["perplexity"],
+                        "tokens": base["tokens"],
+                        "best_epoch": None,
+                        "best_nll": base["nll"],
+                        "final_minus_best": 0.0,
+                        "path": str(path.relative_to(ROOT)),
+                    }
+                )
         result_key = "standard_lora" if method == "standard" else "wake_lora"
         result = data.get("results", {}).get(result_key)
         if not result:
             continue
+        best_epoch, best_nll, gap = best_gap(result, path, result_key)
         rows.append(
             {
                 "group": "matrix",
@@ -142,6 +179,9 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
                 "nll": result["nll"],
                 "perplexity": result["perplexity"],
                 "tokens": result["tokens"],
+                "best_epoch": best_epoch,
+                "best_nll": best_nll,
+                "final_minus_best": gap,
                 "path": str(path.relative_to(ROOT)),
             }
         )
@@ -156,28 +196,52 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     return st.mean(values), st.pstdev(values)
 
 
+def fmt_float(value: float | None, digits: int = 6) -> str:
+    if value is None:
+        return ""
+    return f"{value:.{digits}f}"
+
+
 def markdown_summary(rows: list[dict]) -> str:
-    grouped: dict[tuple[int, str], list[float]] = {}
+    grouped: dict[tuple[int, str], list[dict]] = {}
     for row in rows:
-        grouped.setdefault((row["sample_count"], row["method"]), []).append(float(row["nll"]))
+        grouped.setdefault((row["sample_count"], row["method"]), []).append(row)
 
     lines = [
         "# Wake-LoRA Low-Data Matrix Summary",
         "",
         "Lower NLL is better.",
         "",
-        "| Samples | Method | Runs | Mean NLL | Std |",
-        "|---:|---|---:|---:|---:|",
+        "| Samples | Method | Runs | Mean Final NLL | Std | Mean Best NLL | Mean Final-Best Gap |",
+        "|---:|---|---:|---:|---:|---:|---:|",
     ]
-    for (sample, method), values in sorted(grouped.items()):
-        mean, std = mean_std(values)
-        lines.append(f"| {sample} | {method} | {len(values)} | {mean:.6f} | {std:.6f} |")
+    for (sample, method), group_rows in sorted(grouped.items()):
+        final_values = [float(row["nll"]) for row in group_rows]
+        best_values = [float(row.get("best_nll", row["nll"])) for row in group_rows]
+        gap_values = [float(row.get("final_minus_best", 0.0)) for row in group_rows]
+        mean, std = mean_std(final_values)
+        best_mean, _ = mean_std(best_values)
+        gap_mean, _ = mean_std(gap_values)
+        lines.append(
+            f"| {sample} | {method} | {len(group_rows)} | {mean:.6f} | {std:.6f} | "
+            f"{best_mean:.6f} | {gap_mean:.6f} |"
+        )
 
-    lines.extend(["", "## Per-Seed Rows", "", "| Samples | Seed | Method | NLL | PPL | Path |", "|---:|---:|---|---:|---:|---|"])
+    lines.extend(
+        [
+            "",
+            "## Per-Seed Rows",
+            "",
+            "| Samples | Seed | Method | Final NLL | Best Epoch | Best NLL | Gap | PPL | Path |",
+            "|---:|---:|---|---:|---:|---:|---:|---:|---|",
+        ]
+    )
     for row in sorted(rows, key=lambda x: (x["sample_count"], x["seed"], x["method"], x["path"])):
+        best_epoch = "" if row.get("best_epoch") is None else str(row["best_epoch"])
         lines.append(
             f"| {row['sample_count']} | {row['seed']} | {row['method']} | "
-            f"{row['nll']:.6f} | {row['perplexity']:.4f} | `{row['path']}` |"
+            f"{row['nll']:.6f} | {best_epoch} | {fmt_float(row.get('best_nll'))} | "
+            f"{fmt_float(row.get('final_minus_best'))} | {row['perplexity']:.4f} | `{row['path']}` |"
         )
     return "\n".join(lines) + "\n"
 
@@ -197,7 +261,19 @@ def main() -> None:
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["group", "sample_count", "seed", "method", "nll", "perplexity", "tokens", "path"],
+            fieldnames=[
+                "group",
+                "sample_count",
+                "seed",
+                "method",
+                "nll",
+                "perplexity",
+                "tokens",
+                "best_epoch",
+                "best_nll",
+                "final_minus_best",
+                "path",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)

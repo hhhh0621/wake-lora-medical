@@ -181,6 +181,17 @@ lambda_segment(n) = 0.005,                  if n <= 16
 lambda_segment(n) = 0.005 * (16 / n)^2,     if n > 16
 ```
 
+`wake_delayed` uses the same sample-count budget, but delays the Wake KL/segment
+regularizers until the LoRA adapter has completed the first quarter of its
+optimizer updates:
+
+```text
+wake_multiplier(t) = 0,                     if progress(t) < 0.25
+wake_multiplier(t) = linear ramp to 1,      over the next 0.125 progress
+lambda_kl(t) = wake_multiplier(t) * lambda_kl(n)
+lambda_segment(t) = wake_multiplier(t) * lambda_segment(n)
+```
+
 `wake_reliable` uses the same schedule but only applies the segment memory loss
 when a target token already has at least two historical hidden states in the
 memory bank. This guards the extreme 8/16-sample regime, where the memory anchor
@@ -191,6 +202,9 @@ After a run, summarize results without generating server-side HTML:
 ```bash
 PYTHONPATH=src /opt/conda/bin/python scripts/summarize_matrix.py
 ```
+
+The matrix summary reports final NLL as the primary metric and also includes
+best-epoch NLL plus the final-best gap as an overfitting diagnostic.
 
 For fair low-data comparisons, use a fixed optimizer-update budget instead of a
 fixed epoch count. For example, this gives each sample-count setting about 32
@@ -219,7 +233,7 @@ HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/r
   --output_prefix matrix_lr1e4_o1 \
   --samples 8 \
   --seeds 42,43,44 \
-  --methods standard,wake_budget \
+  --methods standard,wake_budget,wake_delayed \
   --target_updates 32 \
   --learning_rate 1e-4
 ```

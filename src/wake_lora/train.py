@@ -58,6 +58,18 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--alpha_max", type=float, default=2.0)
     parser.add_argument("--ce_reuse_max", type=float, default=2.0)
     parser.add_argument("--wake_temperature", type=float, default=1.0)
+    parser.add_argument(
+        "--wake_start_ratio",
+        type=float,
+        default=0.0,
+        help="Fraction of optimizer updates to run before enabling Wake KL/segment regularizers.",
+    )
+    parser.add_argument(
+        "--wake_ramp_ratio",
+        type=float,
+        default=0.0,
+        help="Fraction of optimizer updates used to linearly ramp Wake regularizers after wake_start_ratio.",
+    )
     parser.add_argument("--dtype", type=str, default="bf16")
     parser.add_argument("--device_map", type=str, default="auto")
     parser.add_argument("--no_gradient_checkpointing", action="store_true")
@@ -153,6 +165,22 @@ def _standard_lora_loss(model: Any, batch: dict[str, torch.Tensor]) -> tuple[tor
     }
 
 
+def wake_regularizer_multiplier(
+    global_step: int,
+    total_updates: int,
+    start_ratio: float,
+    ramp_ratio: float,
+) -> float:
+    if start_ratio <= 0.0 and ramp_ratio <= 0.0:
+        return 1.0
+    progress = global_step / max(total_updates, 1)
+    if progress < start_ratio:
+        return 0.0
+    if ramp_ratio <= 0.0:
+        return 1.0
+    return min(1.0, max(0.0, (progress - start_ratio) / ramp_ratio))
+
+
 def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
     if method not in {"standard_lora", "wake_lora"}:
         raise ValueError(f"Unsupported method: {method}")
@@ -199,7 +227,10 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         alpha_max=args.alpha_max,
         ce_reuse_max=args.ce_reuse_max,
         temperature=args.wake_temperature,
+        collect_segment_features=args.lambda_segment > 0 and args.wake_start_ratio > 0,
     )
+    base_lambda_kl = args.lambda_kl
+    base_lambda_segment = args.lambda_segment
     device = model_input_device(model)
     best_nll = float("inf")
     global_step = 0
@@ -212,7 +243,16 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         for micro_step, batch in enumerate(progress, start=1):
             batch = move_batch(batch, device)
             if method == "wake_lora":
+                wake_multiplier = wake_regularizer_multiplier(
+                    global_step=global_step,
+                    total_updates=total_updates,
+                    start_ratio=args.wake_start_ratio,
+                    ramp_ratio=args.wake_ramp_ratio,
+                )
+                wake_loss.lambda_kl = base_lambda_kl * wake_multiplier
+                wake_loss.lambda_segment = base_lambda_segment * wake_multiplier
                 loss, metrics = wake_loss(model, batch)
+                metrics["wake_multiplier"] = wake_multiplier
             else:
                 loss, metrics = _standard_lora_loss(model, batch)
 

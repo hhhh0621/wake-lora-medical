@@ -45,6 +45,13 @@ METHODS = {
         "lambda_kl": "budget",
         "lambda_segment": "budget",
     },
+    "wake_delayed": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "budget",
+        "lambda_segment": "budget",
+        "wake_start_ratio": 0.25,
+        "wake_ramp_ratio": 0.125,
+    },
     "wake_reliable": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": "scheduled",
@@ -84,10 +91,24 @@ def scheduled_segment(sample_count: int, base_lambda: float, ref_samples: int, p
     return base_lambda * (ref_samples / sample_count) ** power
 
 
-def output_dir_name(prefix: str, samples: int, seed: int, method: str, lambda_kl: float, lambda_segment: float) -> str:
+def output_dir_name(
+    prefix: str,
+    samples: int,
+    seed: int,
+    method: str,
+    lambda_kl: float,
+    lambda_segment: float,
+    wake_start_ratio: float = 0.0,
+    wake_ramp_ratio: float = 0.0,
+) -> str:
     kl_tag = f"kl{lambda_kl:.5g}".replace(".", "p")
     seg_tag = f"seg{lambda_segment:.5g}".replace(".", "p")
-    return f"{prefix}_n{samples}_s{seed}_{method}_{kl_tag}_{seg_tag}"
+    name = f"{prefix}_n{samples}_s{seed}_{method}_{kl_tag}_{seg_tag}"
+    if wake_start_ratio > 0 or wake_ramp_ratio > 0:
+        start_tag = f"ws{wake_start_ratio:.5g}".replace(".", "p")
+        ramp_tag = f"wr{wake_ramp_ratio:.5g}".replace(".", "p")
+        name = f"{name}_{start_tag}_{ramp_tag}"
+    return name
 
 
 def resolve_epochs(args: argparse.Namespace, samples: int) -> int:
@@ -148,8 +169,19 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         )
     lambda_segment = float(lambda_segment)
     segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
+    wake_start_ratio = float(spec.get("wake_start_ratio", args.wake_start_ratio))
+    wake_ramp_ratio = float(spec.get("wake_ramp_ratio", args.wake_ramp_ratio))
     epochs = resolve_epochs(args, samples)
-    out_dir = ROOT / "outputs" / output_dir_name(args.output_prefix, samples, seed, method, float(lambda_kl), lambda_segment)
+    out_dir = ROOT / "outputs" / output_dir_name(
+        args.output_prefix,
+        samples,
+        seed,
+        method,
+        float(lambda_kl),
+        lambda_segment,
+        wake_start_ratio,
+        wake_ramp_ratio,
+    )
     cmd = [
         args.python_bin,
         "-m",
@@ -184,6 +216,10 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(args.segment_memory_size),
         "--segment_min_count",
         str(segment_min_count),
+        "--wake_start_ratio",
+        str(wake_start_ratio),
+        "--wake_ramp_ratio",
+        str(wake_ramp_ratio),
         "--seed",
         str(seed),
         *spec["skip"],
@@ -230,6 +266,8 @@ def main() -> None:
     parser.add_argument("--budget_base_segment", type=float, default=0.005)
     parser.add_argument("--budget_segment_ref_samples", type=int, default=16)
     parser.add_argument("--budget_segment_power", type=float, default=2.0)
+    parser.add_argument("--wake_start_ratio", type=float, default=0.0)
+    parser.add_argument("--wake_ramp_ratio", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
