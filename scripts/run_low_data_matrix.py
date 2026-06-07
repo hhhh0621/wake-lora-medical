@@ -85,6 +85,14 @@ def output_dir_name(prefix: str, samples: int, seed: int, method: str, lambda_kl
     return f"{prefix}_n{samples}_s{seed}_{method}_{kl_tag}_{seg_tag}"
 
 
+def resolve_epochs(args: argparse.Namespace, samples: int) -> int:
+    if args.target_updates is None or args.target_updates <= 0:
+        return args.epochs
+    updates_per_epoch = max(1, (samples + args.batch_size - 1) // args.batch_size)
+    updates_per_epoch = max(1, (updates_per_epoch + args.gradient_accumulation_steps - 1) // args.gradient_accumulation_steps)
+    return max(1, (args.target_updates + updates_per_epoch - 1) // updates_per_epoch)
+
+
 def summary_exists(output_dir: Path) -> bool:
     path = output_dir / "summary.json"
     if not path.exists():
@@ -122,6 +130,7 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         )
     lambda_segment = float(lambda_segment)
     segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
+    epochs = resolve_epochs(args, samples)
     out_dir = ROOT / "outputs" / output_dir_name(args.output_prefix, samples, seed, method, float(lambda_kl), lambda_segment)
     cmd = [
         args.python_bin,
@@ -138,7 +147,7 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         "--max_length",
         str(args.max_length),
         "--epochs",
-        str(args.epochs),
+        str(epochs),
         "--batch_size",
         str(args.batch_size),
         "--gradient_accumulation_steps",
@@ -175,6 +184,12 @@ def main() -> None:
     parser.add_argument("--max_eval_samples", type=int, default=64)
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument(
+        "--target_updates",
+        type=int,
+        default=None,
+        help="If set, choose epochs per sample count to reach at least this many optimizer updates.",
+    )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
     parser.add_argument("--eval_max_batches", type=int, default=64)

@@ -180,3 +180,22 @@ After a run, summarize results without generating server-side HTML:
 ```bash
 PYTHONPATH=src /opt/conda/bin/python scripts/summarize_matrix.py
 ```
+
+For fair low-data comparisons, use a fixed optimizer-update budget instead of a
+fixed epoch count. For example, this gives each sample-count setting about 32
+optimizer updates:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
+  --output_prefix matrix_budget_o1 \
+  --samples 8,16,32,64,128 \
+  --seeds 42,43,44 \
+  --methods standard,wake_kl_segment,wake_scheduled \
+  --target_updates 32
+```
+
+Then summarize that budget-controlled matrix:
+
+```bash
+PYTHONPATH=src /opt/conda/bin/python scripts/summarize_matrix.py --prefix matrix_budget_o1
+```
