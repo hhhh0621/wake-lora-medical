@@ -210,3 +210,16 @@ Then summarize that budget-controlled matrix:
 ```bash
 PYTHONPATH=src /opt/conda/bin/python scripts/summarize_matrix.py --prefix matrix_budget_o1
 ```
+
+For extreme 8-sample runs, the fixed-update curves can overfit late in training.
+Use a separate output prefix when sweeping learning rates, for example:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
+  --output_prefix matrix_lr1e4_o1 \
+  --samples 8 \
+  --seeds 42,43,44 \
+  --methods standard,wake_budget \
+  --target_updates 32 \
+  --learning_rate 1e-4
+```

@@ -188,6 +188,8 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(seed),
         *spec["skip"],
     ]
+    if args.learning_rate is not None:
+        cmd.extend(["--learning_rate", str(args.learning_rate)])
     return cmd, out_dir
 
 
@@ -210,6 +212,7 @@ def main() -> None:
     )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--eval_max_batches", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--segment_memory_size", type=int, default=4)
