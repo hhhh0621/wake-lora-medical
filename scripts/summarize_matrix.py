@@ -59,31 +59,32 @@ def parse_matrix_name(path: Path) -> tuple[int, int, str] | None:
     return sample, seed, method
 
 
-def collect_rows(prefix: str) -> list[dict]:
+def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
     rows = []
     seen = set()
-    for group, sample, seed, method, rel_path, result_key in LEGACY_RUNS:
-        path = ROOT / rel_path
-        data = read_json(path)
-        if not data:
-            continue
-        result = data.get("results", {}).get(result_key)
-        if not result:
-            continue
-        key = (group, sample, seed, method)
-        seen.add(key)
-        rows.append(
-            {
-                "group": group,
-                "sample_count": sample,
-                "seed": seed,
-                "method": method,
-                "nll": result["nll"],
-                "perplexity": result["perplexity"],
-                "tokens": result["tokens"],
-                "path": rel_path,
-            }
-        )
+    if include_legacy:
+        for group, sample, seed, method, rel_path, result_key in LEGACY_RUNS:
+            path = ROOT / rel_path
+            data = read_json(path)
+            if not data:
+                continue
+            result = data.get("results", {}).get(result_key)
+            if not result:
+                continue
+            key = (group, sample, seed, method)
+            seen.add(key)
+            rows.append(
+                {
+                    "group": group,
+                    "sample_count": sample,
+                    "seed": seed,
+                    "method": method,
+                    "nll": result["nll"],
+                    "perplexity": result["perplexity"],
+                    "tokens": result["tokens"],
+                    "path": rel_path,
+                }
+            )
 
     for path in sorted((ROOT / "outputs").glob(f"{prefix}_*/summary.json")):
         parsed = parse_matrix_name(path)
@@ -152,10 +153,11 @@ def markdown_summary(rows: list[dict]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize low-data Wake-LoRA matrix outputs.")
     parser.add_argument("--prefix", default="matrix_medical_o1")
+    parser.add_argument("--include_legacy", action="store_true")
     parser.add_argument("--output_dir", default="reports")
     args = parser.parse_args()
 
-    rows = collect_rows(args.prefix)
+    rows = collect_rows(args.prefix, include_legacy=args.include_legacy)
     out_dir = ROOT / args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
