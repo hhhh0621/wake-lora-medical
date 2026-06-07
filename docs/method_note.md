@@ -167,3 +167,79 @@ The next method direction should therefore be sample-aware rather than uniformly
 strong: keep delayed Wake for the extreme 8-sample regime, reduce or disable KL
 at 16 samples, and keep only a very light segment memory term when the sample
 count is larger.
+
+## V3: Gentle Sample-Aware Wake Schedule
+
+The next controlled variant is `wake_gentle`. It treats Wake regularization as
+an extreme-low-data stabilizer rather than a uniformly strong add-on:
+
+```text
+lambda_kl(n) = 0.1,                         if n <= 8
+lambda_kl(n) = 0,                           if n > 8
+lambda_segment(n) = 0.005,                  if n <= 8
+lambda_segment(n) = 0.000625,               if 8 < n <= 16
+lambda_segment(n) = 0,                      if n > 16
+wake_start_ratio = 0.25 and ramp_ratio = 0.125, if n <= 8
+wake_start_ratio = 0 and ramp_ratio = 0,         if n > 8
+```
+
+This directly tests the current interpretation of the low-LR matrix:
+
+- 8 samples: keep the delayed KL+segment Wake geometry because it improves both
+  final NLL and late-training drift.
+- 16 samples: remove KL because standard LoRA is already strong at low learning
+  rate; keep only a very weak segment memory term.
+- 32+ samples: disable Wake regularization, so the method does not convert
+  noise-level segment effects into a false claim.
+
+The goal is not to force Wake to beat standard LoRA everywhere. A publishable
+claim should be narrower and cleaner: Wake-style sample utilization improves
+extreme low-data stability, and the strength of the memory geometry must decay
+as the supervised sample count grows.
+
+### 16-Sample Gentle Ablation
+
+The 16-sample low-LR matrix showed that strong KL/segment regularization is not
+needed. A focused three-seed ablation confirms that reducing the segment term is
+the right move:
+
+| Variant | Mean final NLL | Mean best NLL | Mean final-best gap |
+|---|---:|---:|---:|
+| Standard LoRA | 1.656166 | 1.655676 | 0.000489 |
+| `wake_gentle`, segment 0.0025, delayed | 1.656489 | 1.655835 | 0.000654 |
+| Segment 0.00125, delayed | 1.656596 | 1.655868 | 0.000728 |
+| Segment 0.00125, no delay | 1.656548 | 1.655891 | 0.000657 |
+| Segment 0.000625, no delay | 1.656199 | 1.655720 | 0.000479 |
+
+The last variant is nearly indistinguishable from standard LoRA and avoids the
+small penalty from stronger Wake terms. It is therefore the new default for
+`wake_gentle` at 16 samples.
+
+### 32-Sample Conservative Decision
+
+The 32-sample low-LR comparisons are effectively tied. The strongest observed
+difference is around `1e-4` NLL, and rerunning the same tiny segment setting can
+move in either direction. For the next default schedule, the safer scientific
+choice is to turn Wake off above 16 samples and report the positive result as an
+extreme-low-data effect rather than overfit the method to noise.
+
+### Clean V3 Low-LR Run
+
+With the conservative `wake_gentle` default, the clean three-seed fixed-update
+run gives:
+
+| Train samples | Standard LoRA | Wake-gentle V3 | Delta |
+|---:|---:|---:|---:|
+| 8 | 1.760924 | 1.738797 | -0.022127 |
+| 16 | 1.656166 | 1.656163 | -0.000003 |
+| 32 | 1.626196 | 1.625987 | -0.000209 |
+
+Only the 8-sample improvement should be described as substantive. The 16- and
+32-sample rows show that the sample-aware schedule avoids the penalty from
+over-regularizing once standard LoRA already has enough data. The 32-sample row
+has Wake regularization disabled, so the tiny numerical difference should be
+treated as run noise rather than a method win.
+
+The loss implementation now skips the frozen-base forward pass whenever both
+KL and CE-reuse are disabled. This keeps segment-only and CE-only ablations
+faster without changing the active objective.

@@ -192,6 +192,20 @@ lambda_kl(t) = wake_multiplier(t) * lambda_kl(n)
 lambda_segment(t) = wake_multiplier(t) * lambda_segment(n)
 ```
 
+`wake_gentle` is the current sample-aware follow-up after the low-learning-rate
+matrix showed that strong Wake regularization helps at 8 samples but is already
+too much at 16 samples:
+
+```text
+lambda_kl(n) = 0.1,                         if n <= 8
+lambda_kl(n) = 0,                           if n > 8
+lambda_segment(n) = 0.005,                  if n <= 8
+lambda_segment(n) = 0.000625,               if 8 < n <= 16
+lambda_segment(n) = 0,                      if n > 16
+wake_start_ratio = 0.25 and wake_ramp_ratio = 0.125, if n <= 8
+wake_start_ratio = 0 and wake_ramp_ratio = 0,         if n > 8
+```
+
 `wake_reliable` uses the same schedule but only applies the segment memory loss
 when a target token already has at least two historical hidden states in the
 memory bank. This guards the extreme 8/16-sample regime, where the memory anchor

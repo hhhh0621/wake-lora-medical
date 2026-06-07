@@ -52,6 +52,13 @@ METHODS = {
         "wake_start_ratio": 0.25,
         "wake_ramp_ratio": 0.125,
     },
+    "wake_gentle": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "gentle",
+        "lambda_segment": "gentle",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
     "wake_reliable": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": "scheduled",
@@ -89,6 +96,36 @@ def scheduled_segment(sample_count: int, base_lambda: float, ref_samples: int, p
     if sample_count <= ref_samples:
         return base_lambda
     return base_lambda * (ref_samples / sample_count) ** power
+
+
+def gentle_kl(sample_count: int, base_lambda: float, max_samples: int) -> float:
+    if sample_count <= max_samples:
+        return base_lambda
+    return 0.0
+
+
+def gentle_segment(
+    sample_count: int,
+    extreme_lambda: float,
+    mid_lambda: float,
+    large_ref_lambda: float,
+    mid_max_samples: int,
+    large_ref_samples: int,
+    power: float,
+) -> float:
+    if sample_count <= 8:
+        return extreme_lambda
+    if sample_count <= mid_max_samples:
+        return mid_lambda
+    if sample_count <= large_ref_samples:
+        return large_ref_lambda
+    return large_ref_lambda * (large_ref_samples / sample_count) ** power
+
+
+def gentle_wake_ratio(sample_count: int, ratio: float, max_samples: int) -> float:
+    if sample_count <= max_samples:
+        return ratio
+    return 0.0
 
 
 def output_dir_name(
@@ -152,6 +189,12 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             base_lambda=args.budget_base_kl,
             cutoff_samples=args.budget_kl_cutoff_samples,
         )
+    elif lambda_kl == "gentle":
+        lambda_kl = gentle_kl(
+            sample_count=samples,
+            base_lambda=args.gentle_base_kl,
+            max_samples=args.gentle_kl_max_samples,
+        )
     lambda_segment = spec["lambda_segment"]
     if lambda_segment == "scheduled":
         lambda_segment = scheduled_segment(
@@ -167,10 +210,34 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             ref_samples=args.budget_segment_ref_samples,
             power=args.budget_segment_power,
         )
+    elif lambda_segment == "gentle":
+        lambda_segment = gentle_segment(
+            sample_count=samples,
+            extreme_lambda=args.gentle_extreme_segment,
+            mid_lambda=args.gentle_mid_segment,
+            large_ref_lambda=args.gentle_large_ref_segment,
+            mid_max_samples=args.gentle_mid_max_samples,
+            large_ref_samples=args.gentle_large_ref_samples,
+            power=args.gentle_segment_power,
+        )
     lambda_segment = float(lambda_segment)
     segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
-    wake_start_ratio = float(spec.get("wake_start_ratio", args.wake_start_ratio))
-    wake_ramp_ratio = float(spec.get("wake_ramp_ratio", args.wake_ramp_ratio))
+    wake_start_ratio = spec.get("wake_start_ratio", args.wake_start_ratio)
+    if wake_start_ratio == "gentle":
+        wake_start_ratio = gentle_wake_ratio(
+            sample_count=samples,
+            ratio=args.gentle_wake_start_ratio,
+            max_samples=args.gentle_delay_max_samples,
+        )
+    wake_ramp_ratio = spec.get("wake_ramp_ratio", args.wake_ramp_ratio)
+    if wake_ramp_ratio == "gentle":
+        wake_ramp_ratio = gentle_wake_ratio(
+            sample_count=samples,
+            ratio=args.gentle_wake_ramp_ratio,
+            max_samples=args.gentle_delay_max_samples,
+        )
+    wake_start_ratio = float(wake_start_ratio)
+    wake_ramp_ratio = float(wake_ramp_ratio)
     epochs = resolve_epochs(args, samples)
     out_dir = ROOT / "outputs" / output_dir_name(
         args.output_prefix,
@@ -266,6 +333,17 @@ def main() -> None:
     parser.add_argument("--budget_base_segment", type=float, default=0.005)
     parser.add_argument("--budget_segment_ref_samples", type=int, default=16)
     parser.add_argument("--budget_segment_power", type=float, default=2.0)
+    parser.add_argument("--gentle_base_kl", type=float, default=0.1)
+    parser.add_argument("--gentle_kl_max_samples", type=int, default=8)
+    parser.add_argument("--gentle_extreme_segment", type=float, default=0.005)
+    parser.add_argument("--gentle_mid_segment", type=float, default=0.000625)
+    parser.add_argument("--gentle_mid_max_samples", type=int, default=16)
+    parser.add_argument("--gentle_large_ref_segment", type=float, default=0.0)
+    parser.add_argument("--gentle_large_ref_samples", type=int, default=32)
+    parser.add_argument("--gentle_segment_power", type=float, default=2.0)
+    parser.add_argument("--gentle_delay_max_samples", type=int, default=8)
+    parser.add_argument("--gentle_wake_start_ratio", type=float, default=0.25)
+    parser.add_argument("--gentle_wake_ramp_ratio", type=float, default=0.125)
     parser.add_argument("--wake_start_ratio", type=float, default=0.0)
     parser.add_argument("--wake_ramp_ratio", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")

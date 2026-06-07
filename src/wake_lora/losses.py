@@ -137,34 +137,45 @@ class WakeLoraLoss:
 
     def __call__(self, model: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
         needs_segment_features = self.lambda_segment > 0 or self.collect_segment_features
+        needs_base_forward = self.lambda_kl > 0 or self.lambda_ce_reuse > 0
         outputs_lora = model(**batch, output_hidden_states=needs_segment_features)
         logits_lora = outputs_lora.logits
         ce_lora_tok, mask = token_ce_loss(logits_lora, batch["labels"])
 
-        with torch.no_grad():
-            with disable_adapter_context(model):
-                outputs_base = model(**batch)
-            logits_base = outputs_base.logits.detach()
-            ce_base_tok, _ = token_ce_loss(logits_base, batch["labels"])
+        if needs_base_forward:
+            with torch.no_grad():
+                with disable_adapter_context(model):
+                    outputs_base = model(**batch)
+                logits_base = outputs_base.logits.detach()
+                ce_base_tok, _ = token_ce_loss(logits_base, batch["labels"])
+        else:
+            logits_base = None
+            ce_base_tok = torch.zeros_like(ce_lora_tok)
 
-        ce_reuse = self.lambda_ce_reuse / (ce_base_tok.detach() + self.eps)
-        ce_reuse = ce_reuse.clamp(min=0.0, max=self.ce_reuse_max)
-        ce_weight = 1.0 + ce_reuse
+        if self.lambda_ce_reuse > 0:
+            ce_reuse = self.lambda_ce_reuse / (ce_base_tok.detach() + self.eps)
+            ce_reuse = ce_reuse.clamp(min=0.0, max=self.ce_reuse_max)
+            ce_weight = 1.0 + ce_reuse
+        else:
+            ce_weight = torch.ones_like(ce_lora_tok)
         weighted_ce_num = (ce_weight * ce_lora_tok).masked_fill(~mask, 0.0).sum()
         weighted_ce_den = ce_weight.masked_fill(~mask, 0.0).sum().clamp_min(1.0)
         ce_lora = weighted_ce_num / weighted_ce_den
 
-        lora_shift, _, _ = shifted_logits_and_labels(logits_lora, batch["labels"])
-        base_shift, _, _ = shifted_logits_and_labels(logits_base, batch["labels"])
+        if self.lambda_kl > 0 and logits_base is not None:
+            lora_shift, _, _ = shifted_logits_and_labels(logits_lora, batch["labels"])
+            base_shift, _, _ = shifted_logits_and_labels(logits_base, batch["labels"])
 
-        temp = self.temperature
-        log_p_lora = F.log_softmax(lora_shift.float() / temp, dim=-1)
-        p_base = F.softmax(base_shift.float() / temp, dim=-1)
-        kl_tok = F.kl_div(log_p_lora, p_base, reduction="none").sum(dim=-1) * (temp * temp)
-
-        alpha = self.lambda_kl / (ce_base_tok.detach() + self.eps)
-        alpha = alpha.clamp(min=self.alpha_min, max=self.alpha_max)
-        wake_kl = masked_mean(alpha * kl_tok, mask)
+            temp = self.temperature
+            log_p_lora = F.log_softmax(lora_shift.float() / temp, dim=-1)
+            p_base = F.softmax(base_shift.float() / temp, dim=-1)
+            kl_tok = F.kl_div(log_p_lora, p_base, reduction="none").sum(dim=-1) * (temp * temp)
+            alpha = self.lambda_kl / (ce_base_tok.detach() + self.eps)
+            alpha = alpha.clamp(min=self.alpha_min, max=self.alpha_max)
+            wake_kl = masked_mean(alpha * kl_tok, mask)
+        else:
+            alpha = torch.zeros_like(ce_lora_tok)
+            wake_kl = logits_lora.new_zeros(())
         segment_loss = logits_lora.new_zeros(())
         segment_metrics = {
             "segment_loss": 0.0,
