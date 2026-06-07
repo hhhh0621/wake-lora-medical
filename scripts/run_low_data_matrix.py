@@ -40,6 +40,12 @@ METHODS = {
         "lambda_kl": "scheduled",
         "lambda_segment": "scheduled",
     },
+    "wake_reliable": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "scheduled",
+        "lambda_segment": "scheduled",
+        "segment_min_count": 2,
+    },
 }
 
 
@@ -115,6 +121,7 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             power=args.scheduled_segment_power,
         )
     lambda_segment = float(lambda_segment)
+    segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
     out_dir = ROOT / "outputs" / output_dir_name(args.output_prefix, samples, seed, method, float(lambda_kl), lambda_segment)
     cmd = [
         args.python_bin,
@@ -148,6 +155,8 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(lambda_segment),
         "--segment_memory_size",
         str(args.segment_memory_size),
+        "--segment_min_count",
+        str(segment_min_count),
         "--seed",
         str(seed),
         *spec["skip"],
@@ -171,6 +180,7 @@ def main() -> None:
     parser.add_argument("--eval_max_batches", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--segment_memory_size", type=int, default=4)
+    parser.add_argument("--segment_min_count", type=int, default=0)
     parser.add_argument("--adaptive_base_kl", type=float, default=0.1)
     parser.add_argument("--adaptive_ref_samples", type=int, default=32)
     parser.add_argument("--adaptive_power", type=float, default=2.0)

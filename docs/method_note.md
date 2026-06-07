@@ -63,6 +63,11 @@ The current implementation stores a small per-token hidden-state memory bank.
 This is still a first approximation, but it is materially closer to SGFR than a
 pure KL anchor because it reintroduces the line-segment wake-zone geometry.
 
+The reliable-memory variant adds a simple gate: a target token only contributes
+to the segment loss after its memory bank has at least `segment_min_count`
+historical hidden states. This avoids using a noisy or empty memory anchor in
+the extreme few-sample regime.
+
 ## Direct Anti-Dropping Variant
 
 The KL-only form behaves mostly as a memory regularizer. To target the data

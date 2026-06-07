@@ -44,6 +44,7 @@ def main() -> None:
         "lambda_ce_reuse": args.lambda_ce_reuse,
         "lambda_segment": args.lambda_segment,
         "segment_memory_size": args.segment_memory_size,
+        "segment_min_count": args.segment_min_count,
         "results": {},
     }
 

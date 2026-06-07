@@ -149,7 +149,7 @@ finished runs by default.
 HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
   --samples 8,16,32,64,128 \
   --seeds 42,43,44 \
-  --methods standard,wake_segment,wake_kl_segment,wake_scheduled
+  --methods standard,wake_segment,wake_kl_segment,wake_reliable
 ```
 
 `wake_adaptive` uses the current sample-aware KL rule:
@@ -169,6 +169,11 @@ lambda_kl(n) = 0,                           if n > 32
 lambda_segment(n) = 0.005,                  if n <= 64
 lambda_segment(n) = 0.005 * (64 / n)^2,     if n > 64
 ```
+
+`wake_reliable` uses the same schedule but only applies the segment memory loss
+when a target token already has at least two historical hidden states in the
+memory bank. This guards the extreme 8/16-sample regime, where the memory anchor
+can otherwise be too noisy.
 
 After a run, summarize results without generating server-side HTML:
 

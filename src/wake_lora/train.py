@@ -53,6 +53,7 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--lambda_ce_reuse", type=float, default=0.0)
     parser.add_argument("--lambda_segment", type=float, default=0.0)
     parser.add_argument("--segment_memory_size", type=int, default=4)
+    parser.add_argument("--segment_min_count", type=int, default=0)
     parser.add_argument("--alpha_min", type=float, default=0.0)
     parser.add_argument("--alpha_max", type=float, default=2.0)
     parser.add_argument("--ce_reuse_max", type=float, default=2.0)
@@ -193,6 +194,7 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         lambda_ce_reuse=args.lambda_ce_reuse,
         lambda_segment=args.lambda_segment,
         segment_memory_size=args.segment_memory_size,
+        segment_min_count=args.segment_min_count,
         alpha_min=args.alpha_min,
         alpha_max=args.alpha_max,
         ce_reuse_max=args.ce_reuse_max,

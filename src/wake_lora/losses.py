@@ -49,17 +49,29 @@ class TokenFeatureMemoryBank:
         self.memory_size = memory_size
         self.features: dict[int, torch.Tensor] = {}
         self.ptr: dict[int, int] = {}
+        self.counts: dict[int, int] = {}
 
     @torch.no_grad()
-    def centroids(self, token_ids: torch.Tensor, fallback: torch.Tensor) -> torch.Tensor:
+    def centroids(
+        self,
+        token_ids: torch.Tensor,
+        fallback: torch.Tensor,
+        min_count: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         rows = []
+        reliable = []
         for idx, token_id in enumerate(token_ids.detach().cpu().tolist()):
-            stored = self.features.get(int(token_id))
-            if stored is None or stored.numel() == 0:
+            key = int(token_id)
+            stored = self.features.get(key)
+            count = self.counts.get(key, 0)
+            if stored is None or stored.numel() == 0 or count < min_count:
                 rows.append(fallback[idx].detach())
+                reliable.append(min_count <= 0)
             else:
-                rows.append(stored.to(fallback.device, dtype=fallback.dtype).mean(dim=0))
-        return torch.stack(rows, dim=0)
+                valid_count = min(count, self.memory_size)
+                rows.append(stored[:valid_count].to(fallback.device, dtype=fallback.dtype).mean(dim=0))
+                reliable.append(True)
+        return torch.stack(rows, dim=0), torch.tensor(reliable, dtype=torch.bool, device=fallback.device)
 
     @torch.no_grad()
     def update(self, token_ids: torch.Tensor, features: torch.Tensor) -> None:
@@ -69,9 +81,11 @@ class TokenFeatureMemoryBank:
             if key not in self.features:
                 self.features[key] = value.new_zeros((self.memory_size, value.numel()))
                 self.ptr[key] = 0
+                self.counts[key] = 0
             slot = self.ptr[key]
             self.features[key][slot].copy_(value.to(self.features[key].device))
             self.ptr[key] = (slot + 1) % self.memory_size
+            self.counts[key] += 1
 
 
 def segment_distance(
@@ -101,6 +115,7 @@ class WakeLoraLoss:
         lambda_ce_reuse: float = 0.0,
         lambda_segment: float = 0.0,
         segment_memory_size: int = 4,
+        segment_min_count: int = 0,
         eps: float = 1e-4,
         alpha_min: float = 0.0,
         alpha_max: float = 2.0,
@@ -110,6 +125,7 @@ class WakeLoraLoss:
         self.lambda_kl = lambda_kl
         self.lambda_ce_reuse = lambda_ce_reuse
         self.lambda_segment = lambda_segment
+        self.segment_min_count = segment_min_count
         self.eps = eps
         self.alpha_min = alpha_min
         self.alpha_max = alpha_max
@@ -153,6 +169,7 @@ class WakeLoraLoss:
             "segment_out_ratio": 0.0,
             "segment_ab_dist": 0.0,
             "segment_memory_tokens": float(len(self.segment_bank.features)),
+            "segment_reliable_ratio": 0.0,
         }
         if self.lambda_segment > 0:
             hidden = outputs_lora.hidden_states[-1][:, :-1, :].contiguous()
@@ -162,11 +179,21 @@ class WakeLoraLoss:
             if valid_hidden.numel() > 0:
                 output_weight = model.get_output_embeddings().weight
                 anchor_a = output_weight[valid_labels].float()
-                anchor_b = self.segment_bank.centroids(valid_labels, fallback=anchor_a)
-                segment_loss, segment_metrics = segment_distance(valid_hidden, anchor_a, anchor_b)
+                anchor_b, reliable = self.segment_bank.centroids(
+                    valid_labels,
+                    fallback=anchor_a,
+                    min_count=self.segment_min_count,
+                )
+                if reliable.any():
+                    segment_loss, segment_metrics = segment_distance(
+                        valid_hidden[reliable],
+                        anchor_a[reliable],
+                        anchor_b[reliable],
+                    )
                 self.segment_bank.update(valid_labels, valid_hidden)
                 segment_metrics["segment_loss"] = float(segment_loss.detach().cpu())
                 segment_metrics["segment_memory_tokens"] = float(len(self.segment_bank.features))
+                segment_metrics["segment_reliable_ratio"] = float(reliable.float().mean().detach().cpu())
 
         total = ce_lora + wake_kl + self.lambda_segment * segment_loss
 
