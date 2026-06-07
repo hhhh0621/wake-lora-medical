@@ -136,25 +136,34 @@ the same regularization is already too strong. The `wake_budget` schedule keeps
 the strong loss for 8/16 samples, disables KL above 16 samples, and decays the
 segment term with sample count.
 
-## Low-LR 8-Sample Update
+## Low-LR Fixed-Update Matrix
 
-With 8 train samples, 64 eval samples, three seeds, 32 optimizer updates, and
-`learning_rate=1e-4`, both LoRA variants improve substantially over the direct
-base model:
+With 64 eval samples, three seeds, 32 optimizer updates, and
+`learning_rate=1e-4`, the low-data matrix is substantially stronger than the
+earlier `2e-4` runs:
 
-- Base mean NLL: 1.9395.
-- Standard LoRA mean final NLL: 1.7609.
-- Wake-budget mean final NLL: 1.7499.
+| Train samples | Base | Standard LoRA | Wake-budget | Wake-delayed |
+|---:|---:|---:|---:|---:|
+| 8 | 1.9395 | 1.7609 | 1.7499 | 1.7389 |
+| 16 | 1.9395 | 1.6562 | 1.6584 | 1.6579 |
+| 32 | 1.9395 | 1.6262 | 1.6260 | 1.6263 |
 
-The win is small but seed-consistent. The epoch curves show a more important
-diagnostic: standard LoRA and Wake-budget both reach their best validation NLL
-around epochs 5-7, then drift upward. Wake-budget reduces the final-model drift,
-but its best-epoch NLL is still slightly worse than standard LoRA's best-epoch
-NLL. This means the current advantage is mostly late-training stabilization, not
-yet a stronger early optimum.
+`wake_delayed` lets the LoRA adapter adapt under ordinary CE for the first 25%
+of optimizer updates, then linearly ramps Wake KL/segment regularization over
+the next 12.5% of updates. This preserves most of standard LoRA's early
+plasticity while using Wake geometry as a late-stage anti-drift constraint.
 
-The next variant, `wake_delayed`, tests that interpretation directly. It lets
-the LoRA adapter adapt under ordinary CE for the first 25% of optimizer updates,
-then linearly ramps Wake KL/segment regularization over the next 12.5% of
-updates. The intended behavior is to preserve standard LoRA's early plasticity
-while using Wake geometry as a late-stage anti-drift constraint.
+Interpretation:
+
+- At 8 samples, Wake-delayed is the current best final model and reduces the
+  final-best gap from 0.0703 for standard LoRA to 0.0474.
+- At 16 samples, low learning rate nearly removes late overfitting; standard
+  LoRA is best by about 0.0017 NLL, so strong KL/segment regularization is no
+  longer helpful.
+- At 32 samples, methods are effectively tied; the tiny segment-only budget is
+  marginally best, but the difference is too small to overstate.
+
+The next method direction should therefore be sample-aware rather than uniformly
+strong: keep delayed Wake for the extreme 8-sample regime, reduce or disable KL
+at 16 samples, and keep only a very light segment memory term when the sample
+count is larger.
