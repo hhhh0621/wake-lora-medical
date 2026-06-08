@@ -46,6 +46,8 @@ def main() -> None:
         "lora_use_rslora": args.lora_use_rslora,
         "lora_use_dora": args.lora_use_dora,
         "lora_init": args.lora_init,
+        "ema_decay": args.ema_decay,
+        "ema_start_ratio": args.ema_start_ratio,
         "lambda_kl": args.lambda_kl,
         "lambda_ce_reuse": args.lambda_ce_reuse,
         "lambda_self_reuse": args.lambda_self_reuse,

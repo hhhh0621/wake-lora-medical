@@ -46,6 +46,8 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
+    parser.add_argument("--ema_decay", type=float, default=0.0)
+    parser.add_argument("--ema_start_ratio", type=float, default=0.0)
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
@@ -208,6 +210,34 @@ def trainable_parameter_stats(model: Any) -> dict[str, float]:
     }
 
 
+@torch.no_grad()
+def init_ema_state(model: Any) -> dict[str, torch.Tensor]:
+    return {
+        name: param.detach().float().clone()
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
+
+
+@torch.no_grad()
+def update_ema_state(model: Any, ema_state: dict[str, torch.Tensor], decay: float) -> None:
+    for name, param in model.named_parameters():
+        if not param.requires_grad or name not in ema_state:
+            continue
+        ema_state[name].mul_(decay).add_(param.detach().float(), alpha=1.0 - decay)
+
+
+@torch.no_grad()
+def swap_trainable_state(model: Any, new_state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    backup = {}
+    for name, param in model.named_parameters():
+        if not param.requires_grad or name not in new_state:
+            continue
+        backup[name] = param.detach().clone()
+        param.copy_(new_state[name].to(device=param.device, dtype=param.dtype))
+    return backup
+
+
 def wake_regularizer_multiplier(
     global_step: int,
     total_updates: int,
@@ -295,6 +325,7 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
     device = model_input_device(model)
     best_nll = float("inf")
     global_step = 0
+    ema_state: dict[str, torch.Tensor] | None = None
 
     for epoch in range(args.epochs):
         model.train()
@@ -335,6 +366,12 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
                 global_step += 1
+                ema_progress = global_step / max(total_updates, 1)
+                if args.ema_decay > 0 and ema_progress >= args.ema_start_ratio:
+                    if ema_state is None:
+                        ema_state = init_ema_state(model)
+                    else:
+                        update_ema_state(model, ema_state, decay=args.ema_decay)
 
                 avg_metrics = {
                     key: value / max(micro_step, 1)
@@ -377,15 +414,42 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         max_batches=args.eval_max_batches,
         desc=f"{method} final eval",
     )
+    raw_final_metrics = dict(final_metrics)
     final_metrics.update(
         {
             "method": method,
             "global_step": global_step,
             "parameter_stats": stats,
             "adapter_dir": str(out_dir / "adapter_final"),
+            "ema_decay": args.ema_decay,
+            "ema_start_ratio": args.ema_start_ratio,
         }
     )
     model.save_pretrained(out_dir / "adapter_final")
+
+    if ema_state is not None:
+        backup_state = swap_trainable_state(model, ema_state)
+        ema_metrics = evaluate_nll(
+            model,
+            eval_loader,
+            max_batches=args.eval_max_batches,
+            desc=f"{method} ema eval",
+        )
+        model.save_pretrained(out_dir / "adapter_ema")
+        swap_trainable_state(model, backup_state)
+        final_metrics.update(
+            {
+                "raw_final_nll": raw_final_metrics["nll"],
+                "raw_final_perplexity": raw_final_metrics["perplexity"],
+                "ema_nll": ema_metrics["nll"],
+                "ema_perplexity": ema_metrics["perplexity"],
+                "ema_tokens": ema_metrics["tokens"],
+                "nll": ema_metrics["nll"],
+                "perplexity": ema_metrics["perplexity"],
+                "tokens": ema_metrics["tokens"],
+                "adapter_dir": str(out_dir / "adapter_ema"),
+            }
+        )
     save_json(final_metrics, out_dir / "eval_final.json")
     logger.info("%s final: nll=%.4f ppl=%.2f", method, final_metrics["nll"], final_metrics["perplexity"])
 

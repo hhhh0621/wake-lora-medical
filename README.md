@@ -206,10 +206,10 @@ wake_start_ratio = 0.25 and wake_ramp_ratio = 0.125, if n <= 8
 wake_start_ratio = 0 and wake_ramp_ratio = 0,         if n > 8
 ```
 
-`wake_utilization` is the current candidate method. It keeps the V3 delayed
-KL+segment anchor at 8 samples, adds normalized current-model token reuse and
-two-view dropout consistency, keeps only consistency at 16 samples, and disables
-Wake-utilization terms above 16 samples:
+`wake_utilization` keeps the V3 delayed KL+segment anchor at 8 samples, adds
+normalized current-model token reuse and two-view dropout consistency, keeps
+only consistency at 16 samples, and disables Wake-utilization terms above 16
+samples:
 
 ```text
 if n <= 8:
@@ -239,12 +239,39 @@ claim is therefore narrower: it substantially reduces late-training drift when
 the 8-sample set is reused for longer budgets. See
 `docs/method_note.md` for the full positive and negative ablations.
 
-The most promising LoRA-side trick so far is PiSSA initialization. With
-`--lora_init pissa_niter_4`, `learning_rate=5e-5`, and 32 updates,
-Wake-utilization reaches `1.703131` mean NLL on 8 samples, slightly better than
-the tuned ordinary standard LoRA baseline (`1.705007`). The margin is still
-small, but the final-best gap drops to `0.002777`, making it a useful direction
-for the next round.
+The current best candidate is `wake_utilization_strong` with PiSSA
+initialization:
+
+```text
+--lora_init pissa_niter_4
+--learning_rate 5e-5
+--target_updates 32
+if n <= 8:
+    lambda_kl = 0.3
+    lambda_segment = 0.015
+    lambda_self_reuse = 0.025
+    lambda_consistency = 0.5
+    wake_start_ratio = 0.25
+    wake_ramp_ratio = 0.125
+elif n <= 16:
+    lambda_consistency = 0.5
+else:
+    all Wake-utilization terms = 0
+```
+
+Independent three-seed results against PiSSA LoRA:
+
+| Train samples | Standard PiSSA | Wake strong PiSSA | Final-best gap, standard | Final-best gap, Wake |
+|---:|---:|---:|---:|---:|
+| 8 | 1.767560 | 1.697446 | 0.064367 | 0.000277 |
+| 16 | 1.677108 | 1.660998 | 0.004337 | 0.000130 |
+
+The result is promising because Wake makes the final checkpoint almost match
+the best checkpoint, while standard PiSSA still drifts late. The claim should
+remain conservative until it is validated on a second medical dataset and
+compared against tuned ordinary LoRA plus PiSSA/DoRA baselines. EMA adapter
+averaging was tested as a fair no-validation trick, but did not beat the raw
+Wake strong checkpoint under the current settings.
 
 Run the candidate matrix with:
 

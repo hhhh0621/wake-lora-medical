@@ -496,3 +496,97 @@ when the adapter initialization is more expressive.
 
 `lr=7.5e-5` with PiSSA is too aggressive: Wake reduces the damage but does not
 beat the `5e-5` setting.
+
+## V8: Strong PiSSA Wake-Utilization Schedule
+
+The next sweep asked a stricter question: can Wake still help after LoRA is
+given a better initialization and a tuned low learning rate? PiSSA made the
+adapter more expressive, but standard PiSSA also drifted badly near the end of
+tiny-data training. That is exactly the regime where the Wake objective should
+matter if the sample-utilization story is real.
+
+The strongest 8-sample PiSSA sweep used `lr=5e-5`, 32 optimizer updates, three
+seeds, and `init_lora_weights=pissa_niter_4`:
+
+| Wake setting | Mean final NLL | Mean best NLL | Gap |
+|---|---:|---:|---:|
+| `KL=0.05`, segment `0.0025` | 1.710705 | 1.701880 | 0.008825 |
+| `KL=0.15`, segment `0.0075` | 1.704067 | 1.702277 | 0.001791 |
+| `KL=0.20`, segment `0.0100` | 1.694956 | 1.694612 | 0.000344 |
+| `KL=0.25`, segment `0.0125` | 1.700991 | 1.699328 | 0.001663 |
+| `KL=0.30`, segment `0.0150` | 1.693197 | 1.693055 | 0.000142 |
+| `KL=0.40`, segment `0.0200` | 1.693300 | 1.692858 | 0.000442 |
+
+The split sweep suggests that the KL anchor is the main driver and the segment
+term is a smaller geometric stabilizer:
+
+| Wake setting | Mean final NLL |
+|---|---:|
+| `KL=0.3`, segment `0.010` | 1.693769 |
+| `KL=0.3`, segment `0.005` | 1.695025 |
+| `KL=0.2`, segment `0.015` | 1.703003 |
+| `KL=0.1`, segment `0.015` | 1.703375 |
+
+Self-reuse and consistency were then tested under the strong KL+segment anchor:
+
+| Self-reuse | Consistency | Mean final NLL |
+|---:|---:|---:|
+| 0.000 | 0.5 | 1.693664 |
+| 0.010 | 0.5 | 1.694452 |
+| 0.025 | 0.0 | 1.707339 |
+| 0.025 | 1.0 | 1.697085 |
+| 0.050 | 0.5 | 1.698204 |
+
+Interpretation: consistency is important, self-reuse is minor, and too much
+self-reuse or consistency starts to over-constrain the adapter. The current
+default keeps a very light self-reuse term (`0.025`) because it is tied to the
+sample-utilization hypothesis, but the mechanism should be described honestly:
+the major stabilizer in the PiSSA setting is strong delayed KL, supported by
+segment geometry and moderate two-view consistency.
+
+This produced the new implemented method, `wake_utilization_strong`:
+
+```text
+if n <= 8:
+    lambda_kl = 0.3
+    lambda_segment = 0.015
+    lambda_self_reuse = 0.025
+    lambda_consistency = 0.5
+    wake_start_ratio = 0.25
+    wake_ramp_ratio = 0.125
+elif n <= 16:
+    lambda_consistency = 0.5
+else:
+    all Wake-utilization terms = 0
+```
+
+An independent final matrix gives:
+
+| Samples | Method | Mean final NLL | Mean best NLL | Gap |
+|---:|---|---:|---:|---:|
+| 8 | Standard PiSSA | 1.767560 | 1.703193 | 0.064367 |
+| 8 | Wake strong PiSSA | 1.697446 | 1.697169 | 0.000277 |
+| 16 | Standard PiSSA | 1.677108 | 1.672772 | 0.004337 |
+| 16 | Wake strong PiSSA | 1.660998 | 1.660867 | 0.000130 |
+
+This is the cleanest result so far for the paper direction. Wake strong PiSSA
+does not merely find a better early checkpoint; it makes the final checkpoint
+nearly coincide with the best checkpoint. That supports the proposed mechanism
+that Wake improves low-data sample utilization and suppresses final drift.
+
+EMA adapter averaging was added as a fair no-validation baseline, but it is not
+adopted yet:
+
+| EMA setting | Standard PiSSA final NLL | Wake strong PiSSA final NLL |
+|---|---:|---:|
+| decay `0.9`, start `0.25` | 1.745629 | 1.702743 |
+| decay `0.95`, start `0.25` | 1.737061 | 1.696061 |
+
+EMA improves over standard PiSSA drift, but the raw Wake strong matrix is still
+better. This is a useful negative result: the gain is not explained simply by
+averaging weights at the end of training.
+
+Remaining caution: ordinary LoRA at `lr=5e-5` is still a very strong baseline
+for 8 samples, and DoRA was strong in a single-seed probe. The next publishable
+step is therefore external validation on another small medical dataset plus a
+fair tuned-baseline grid, not a larger single-dataset sweep alone.

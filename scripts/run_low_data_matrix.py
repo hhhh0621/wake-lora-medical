@@ -93,6 +93,15 @@ METHODS = {
         "wake_start_ratio": "gentle",
         "wake_ramp_ratio": "gentle",
     },
+    "wake_utilization_strong": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "strong_utilization",
+        "lambda_segment": "strong_utilization",
+        "lambda_self_reuse": "utilization",
+        "lambda_consistency": "utilization",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
     "wake_simplex": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": 0.0,
@@ -295,6 +304,10 @@ def lora_variant_suffix(args: argparse.Namespace) -> str:
         parts.append("dora")
     if args.lora_init != "default":
         parts.append(f"init{args.lora_init}".replace(".", "p").replace("_", ""))
+    if args.ema_decay > 0:
+        ema_tag = f"ema{args.ema_decay:.5g}".replace(".", "p")
+        start_tag = f"emas{args.ema_start_ratio:.5g}".replace(".", "p")
+        parts.extend([ema_tag, start_tag])
     if not parts:
         return ""
     return "_" + "_".join(parts)
@@ -394,6 +407,12 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             value=args.gentle_base_kl,
             max_samples=args.utilization_kl_max_samples,
         )
+    elif lambda_kl == "strong_utilization":
+        lambda_kl = gated_value(
+            sample_count=samples,
+            value=args.strong_utilization_base_kl,
+            max_samples=args.utilization_kl_max_samples,
+        )
     lambda_segment = spec["lambda_segment"]
     if lambda_segment == "scheduled":
         lambda_segment = scheduled_segment(
@@ -423,6 +442,12 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         lambda_segment = gated_value(
             sample_count=samples,
             value=args.gentle_extreme_segment,
+            max_samples=args.utilization_segment_max_samples,
+        )
+    elif lambda_segment == "strong_utilization":
+        lambda_segment = gated_value(
+            sample_count=samples,
+            value=args.strong_utilization_segment,
             max_samples=args.utilization_segment_max_samples,
         )
     lambda_segment = float(lambda_segment)
@@ -524,6 +549,10 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(args.batch_size),
         "--gradient_accumulation_steps",
         str(args.gradient_accumulation_steps),
+        "--ema_decay",
+        str(args.ema_decay),
+        "--ema_start_ratio",
+        str(args.ema_start_ratio),
         "--lora_r",
         str(args.lora_r),
         "--lora_alpha",
@@ -604,6 +633,8 @@ def main() -> None:
     )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    parser.add_argument("--ema_decay", type=float, default=0.0)
+    parser.add_argument("--ema_start_ratio", type=float, default=0.0)
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
@@ -656,6 +687,8 @@ def main() -> None:
     parser.add_argument("--utilization_consistency_max_samples", type=int, default=16)
     parser.add_argument("--utilization_simplex_max_samples", type=int, default=8)
     parser.add_argument("--utilization_simplex_ce_max_samples", type=int, default=8)
+    parser.add_argument("--strong_utilization_base_kl", type=float, default=0.3)
+    parser.add_argument("--strong_utilization_segment", type=float, default=0.015)
     parser.add_argument("--wake_start_ratio", type=float, default=0.0)
     parser.add_argument("--wake_ramp_ratio", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")
