@@ -590,3 +590,59 @@ Remaining caution: ordinary LoRA at `lr=5e-5` is still a very strong baseline
 for 8 samples, and DoRA was strong in a single-seed probe. The next publishable
 step is therefore external validation on another small medical dataset plus a
 fair tuned-baseline grid, not a larger single-dataset sweep alone.
+
+## V9: External Medical Intelligence 2026 Validation
+
+To reduce single-dataset overfitting, the current method was evaluated on
+`huzaifa525/Medical_Intelligence_Dataset_76k_2026_Edition`. This dataset has
+76,000 English medical QA rows and straightforward `input` / `output` columns,
+so it can use the same SFT formatting without adding a dataset-specific parser.
+The config is committed as `configs/qwen_medical_intelligence_2026.json`.
+
+The key external validation uses 64 eval samples, 32 optimizer updates,
+`lr=5e-5`, PiSSA initialization, and five seeds:
+
+| Samples | Method | Runs | Mean final NLL | Std | Mean best NLL | Mean final-best gap |
+|---:|---|---:|---:|---:|---:|---:|
+| 8 | Base Qwen | 5 | 2.369051 | 0.171860 | 2.369051 | 0.000000 |
+| 8 | Standard PiSSA | 5 | 1.796237 | 0.161718 | 1.752521 | 0.043716 |
+| 8 | Wake strong PiSSA | 5 | 1.735205 | 0.136094 | 1.733507 | 0.001698 |
+| 16 | Base Qwen | 5 | 2.369051 | 0.171860 | 2.369051 | 0.000000 |
+| 16 | Standard PiSSA | 5 | 1.750075 | 0.149421 | 1.734739 | 0.015336 |
+| 16 | Wake strong PiSSA | 5 | 1.718800 | 0.140938 | 1.717825 | 0.000975 |
+
+Paired seed deltas are positive for Wake on every seed:
+
+| Samples | Mean paired NLL improvement | SD | t-statistic | Mean gap reduction |
+|---:|---:|---:|---:|---:|
+| 8 | 0.061032 | 0.043061 | 3.169 | 0.042019 |
+| 16 | 0.031275 | 0.015343 | 4.558 | 0.014362 |
+
+This is the first cross-dataset result that looks like a paper-grade signal:
+Wake improves final NLL and sharply reduces final-best drift on a newer medical
+SFT dataset, not only on the original Medical-O1 split.
+
+A default-initialized LoRA LR sweep was also run as a stronger baseline check:
+
+| Samples | Setting | Runs | Mean final NLL | Mean best NLL | Gap |
+|---:|---|---:|---:|---:|---:|
+| 8 | Default LoRA, `lr=5e-5` | 3 | 1.795447 | 1.792315 | 0.003132 |
+| 8 | Default LoRA, `lr=7.5e-5` | 3 | 1.864371 | 1.780763 | 0.083609 |
+| 8 | Default LoRA, `lr=1e-4` | 3 | 1.954033 | 1.779634 | 0.174400 |
+| 8 | Standard PiSSA, `lr=5e-5` | 5 | 1.796237 | 1.752521 | 0.043716 |
+| 8 | Wake strong PiSSA, `lr=5e-5` | 5 | 1.735205 | 1.733507 | 0.001698 |
+| 16 | Default LoRA, `lr=5e-5` | 3 | 1.774460 | 1.774442 | 0.000018 |
+| 16 | Default LoRA, `lr=7.5e-5` | 3 | 1.765160 | 1.755820 | 0.009339 |
+| 16 | Default LoRA, `lr=1e-4` | 3 | 1.798894 | 1.747030 | 0.051864 |
+| 16 | Standard PiSSA, `lr=5e-5` | 5 | 1.750075 | 1.734739 | 0.015336 |
+| 16 | Wake strong PiSSA, `lr=5e-5` | 5 | 1.718800 | 1.717825 | 0.000975 |
+
+Interpretation: the external dataset strengthens the method story. Default
+LoRA is stable at `5e-5` but less plastic; higher LR improves early checkpoints
+only by reintroducing final drift. PiSSA gives more plasticity but drifts under
+ordinary CE. Wake strong PiSSA combines the two desired properties: strong
+adaptation and a final checkpoint close to the best checkpoint.
+
+The next necessary evidence is still a broader tuned-baseline table, especially
+DoRA and possibly QLoRA-style memory settings if the final paper positions the
+method as a practical LoRA fine-tuning objective.

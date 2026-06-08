@@ -273,6 +273,22 @@ compared against tuned ordinary LoRA plus PiSSA/DoRA baselines. EMA adapter
 averaging was tested as a fair no-validation trick, but did not beat the raw
 Wake strong checkpoint under the current settings.
 
+External validation has started on
+`huzaifa525/Medical_Intelligence_Dataset_76k_2026_Edition`, using the committed
+`configs/qwen_medical_intelligence_2026.json` config. With 5 seeds, 64 eval
+samples, `lr=5e-5`, and 32 updates:
+
+| Dataset | Train samples | Standard PiSSA | Wake strong PiSSA | Paired delta |
+|---|---:|---:|---:|---:|
+| Medical Intelligence 2026 | 8 | 1.796237 | 1.735205 | -0.061032 |
+| Medical Intelligence 2026 | 16 | 1.750075 | 1.718800 | -0.031275 |
+
+The same external run also checked default-initialized LoRA at `5e-5`,
+`7.5e-5`, and `1e-4`; the best default LoRA settings were still worse than
+Wake strong PiSSA on the final checkpoint. This is the first cross-dataset
+evidence strong enough to shape the paper narrative, though the final paper
+still needs a broader tuned-baseline table.
+
 Run the candidate matrix with:
 
 ```bash
