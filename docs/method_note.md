@@ -610,17 +610,25 @@ The key external validation uses 64 eval samples, 32 optimizer updates,
 | 16 | Base Qwen | 5 | 2.369051 | 0.171860 | 2.369051 | 0.000000 |
 | 16 | Standard PiSSA | 5 | 1.750075 | 0.149421 | 1.734739 | 0.015336 |
 | 16 | Wake strong PiSSA | 5 | 1.718800 | 0.140938 | 1.717825 | 0.000975 |
+| 32 | Base Qwen | 5 | 2.369051 | 0.171860 | 2.369051 | 0.000000 |
+| 32 | Standard PiSSA | 5 | 1.701457 | 0.137870 | 1.701289 | 0.000169 |
+| 32 | Wake strong PiSSA | 5 | 1.703858 | 0.141619 | 1.703770 | 0.000088 |
 
-Paired seed deltas are positive for Wake on every seed:
+Paired seed deltas are positive for Wake at 8 and 16 samples:
 
-| Samples | Mean paired NLL improvement | SD | t-statistic | Mean gap reduction |
-|---:|---:|---:|---:|---:|
-| 8 | 0.061032 | 0.043061 | 3.169 | 0.042019 |
-| 16 | 0.031275 | 0.015343 | 4.558 | 0.014362 |
+| Samples | Mean paired NLL improvement | SD | 95% CI | t-statistic | Mean gap reduction |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 0.061032 | 0.043061 | +/- 0.053459 | 3.169 | 0.042019 |
+| 16 | 0.031275 | 0.015343 | +/- 0.019047 | 4.558 | 0.014362 |
+| 32 | -0.002401 | 0.005202 | +/- 0.006458 | -1.032 | 0.000081 |
 
 This is the first cross-dataset result that looks like a paper-grade signal:
 Wake improves final NLL and sharply reduces final-best drift on a newer medical
-SFT dataset, not only on the original Medical-O1 split.
+SFT dataset, not only on the original Medical-O1 split. The 32-sample row is a
+tie/slight standard win because the Wake schedule intentionally turns all Wake
+terms off above 16 samples. This is useful evidence for the intended framing:
+Wake is an extreme-low-data utilization/stability objective, not a universal
+regularizer that should be forced on every data regime.
 
 A default-initialized LoRA LR sweep was also run as a stronger baseline check:
 
@@ -643,6 +651,24 @@ only by reintroducing final drift. PiSSA gives more plasticity but drifts under
 ordinary CE. Wake strong PiSSA combines the two desired properties: strong
 adaptation and a final checkpoint close to the best checkpoint.
 
-The next necessary evidence is still a broader tuned-baseline table, especially
-DoRA and possibly QLoRA-style memory settings if the final paper positions the
-method as a practical LoRA fine-tuning objective.
+DoRA and PiSSA+DoRA were then checked as stronger practical baselines:
+
+| Samples | Setting | Runs | Mean final NLL | Mean best NLL | Gap |
+|---:|---|---:|---:|---:|---:|
+| 8 | Standard DoRA | 3 | 1.795610 | 1.793166 | 0.002444 |
+| 8 | Wake strong DoRA | 3 | 1.800244 | 1.799655 | 0.000589 |
+| 8 | Standard PiSSA+DoRA | 3 | 1.832478 | 1.775123 | 0.057355 |
+| 8 | Wake strong PiSSA+DoRA | 3 | 1.752269 | 1.748061 | 0.004208 |
+| 16 | Standard DoRA | 3 | 1.773245 | 1.773245 | 0.000000 |
+| 16 | Wake strong DoRA | 3 | 1.772558 | 1.772558 | 0.000000 |
+| 16 | Standard PiSSA+DoRA | 3 | 1.763282 | 1.749659 | 0.013623 |
+| 16 | Wake strong PiSSA+DoRA | 3 | 1.734727 | 1.734603 | 0.000123 |
+
+DoRA is stable but less adaptive than Wake strong PiSSA on this external
+dataset. PiSSA+DoRA still benefits from Wake, so the Wake loss is not merely
+replaced by a LoRA trick, but the combined PiSSA+DoRA setting is not better
+than Wake strong PiSSA under the current hyperparameters.
+
+The next necessary evidence is still a second external medical dataset, a
+QA-style evaluation metric, and a broader tuned-baseline table if the final
+paper positions the method as a practical LoRA fine-tuning objective.

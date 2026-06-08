@@ -278,16 +278,23 @@ External validation has started on
 `configs/qwen_medical_intelligence_2026.json` config. With 5 seeds, 64 eval
 samples, `lr=5e-5`, and 32 updates:
 
-| Dataset | Train samples | Standard PiSSA | Wake strong PiSSA | Paired delta |
+| Dataset | Train samples | Standard PiSSA | Wake strong PiSSA | Wake improvement |
 |---|---:|---:|---:|---:|
-| Medical Intelligence 2026 | 8 | 1.796237 | 1.735205 | -0.061032 |
-| Medical Intelligence 2026 | 16 | 1.750075 | 1.718800 | -0.031275 |
+| Medical Intelligence 2026 | 8 | 1.796237 | 1.735205 | 0.061032 |
+| Medical Intelligence 2026 | 16 | 1.750075 | 1.718800 | 0.031275 |
+| Medical Intelligence 2026 | 32 | 1.701457 | 1.703858 | -0.002401 |
 
-The same external run also checked default-initialized LoRA at `5e-5`,
-`7.5e-5`, and `1e-4`; the best default LoRA settings were still worse than
-Wake strong PiSSA on the final checkpoint. This is the first cross-dataset
+At 8 and 16 samples, Wake strong PiSSA also sharply reduces the final-best gap:
+`0.043716 -> 0.001698` and `0.015336 -> 0.000975`. At 32 samples, Wake terms are
+intentionally disabled and the methods are effectively tied; this supports the
+low-data-specific claim rather than a universal improvement claim.
+
+The same external round checked default-initialized LoRA at `5e-5`, `7.5e-5`,
+and `1e-4`, plus DoRA and PiSSA+DoRA baselines. Default LoRA and DoRA are stable
+but less adaptive; PiSSA+DoRA still benefits from Wake, but does not beat Wake
+strong PiSSA under the current hyperparameters. This is the first cross-dataset
 evidence strong enough to shape the paper narrative, though the final paper
-still needs a broader tuned-baseline table.
+still needs a broader tuned-baseline table and at least one QA-style metric.
 
 Run the candidate matrix with:
 
