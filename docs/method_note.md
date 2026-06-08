@@ -243,3 +243,114 @@ treated as run noise rather than a method win.
 The loss implementation now skips the frozen-base forward pass whenever both
 KL and CE-reuse are disabled. This keeps segment-only and CE-only ablations
 faster without changing the active objective.
+
+## V4: Exploratory Sample-Utilization Losses
+
+The V3 result is scientifically clean but too small to be the final method.
+The next exploration keeps the same central claim, but attacks the sample
+dropping behavior more directly:
+
+```text
+w_i = 1 + clip(lambda_self_reuse / (CE_lora_i + eps), 0, w_max)
+CE_self_reuse = sum_i w_i CE_lora_i / sum_i w_i
+```
+
+`self_reuse` gives extra normalized gradient mass to tokens the current LoRA
+model already handles well. These tokens are exactly the ones that ordinary CE
+quickly lets go silent. A delayed schedule is now applied to self-reuse and
+consistency losses as well as KL/segment losses, so the adapter first learns
+under ordinary CE and only then turns on the anti-dropping terms.
+
+The second branch is a two-view consistency loss:
+
+```text
+L_cons = 0.5 * KL(P_lora_dropout_1 || P_lora_dropout_2)
+       + 0.5 * KL(P_lora_dropout_2 || P_lora_dropout_1)
+```
+
+This treats one scarce training sample as two stochastic LoRA views and asks
+the adapter to preserve its prediction geometry across views. It is closer to
+"using each sample more than once" than a pure base-model KL anchor, while still
+being compatible with the Wake segment memory.
+
+Early single-seed probes:
+
+- `self_reuse` with `lambda=0.05` improves the 8-sample seed-42 final NLL, but
+  too much weight (`0.1` or `0.2`) increases late drift.
+- `consistency` with `lambda=0.5` or `1.0` is stable and competitive at 8/16
+  samples, but it needs multi-seed validation because it doubles the LoRA
+  forward pass.
+- `hard_cap`, which downweights high-CE tokens directly, is a useful negative
+  result: it harms 8-sample training badly and contradicts the goal of better
+  sample utilization.
+
+The current V4 screening methods are:
+
+- `wake_self_reuse_delayed`
+- `wake_consistency_delayed`
+- `wake_reuse_consistency_delayed`
+- `wake_reuse_consistency_segment`
+- `wake_gentle_self_reuse`
+- `wake_gentle_consistency`
+- `wake_gentle_reuse_consistency`
+
+These variants are intentionally more aggressive than V3. The goal is to learn
+whether a clearly distinct LoRA objective can beat standard LoRA by more than
+the small regularization gains seen so far.
+
+The `wake_gentle_*` variants keep the V3 KL+segment stabilizer and add V4
+sample-reuse terms. They test whether V4 failed because the new terms are weak,
+or because removing the V3 anti-drift anchor made final-model overfitting worse.
+
+## V5: Sample-Aware Utilization Schedule
+
+The best V4 signal is not one uniform loss. It is a sample-aware mixture:
+
+```text
+if n <= 8:
+    KL = 0.1
+    segment = 0.005
+    self_reuse = 0.025
+    consistency = 0.5
+    delay/ramp = 0.25 / 0.125
+elif n <= 16:
+    KL = 0
+    segment = 0
+    self_reuse = 0
+    consistency = 0.5
+else:
+    all Wake-utilization terms = 0
+```
+
+This is implemented as `wake_utilization`. The rationale is empirical and
+mechanistic:
+
+- At 8 samples, the adapter needs the V3 anti-drift anchor plus explicit
+  token/view reuse. This gives a clearer improvement over standard LoRA than
+  V3 alone.
+- At 16 samples, self-reuse starts to overweight easy tokens and hurts NLL.
+  Consistency alone remains stable.
+- At 32 samples and above, ordinary LoRA is already strong under the current
+  low learning-rate fixed-update protocol, so forcing Wake terms risks turning
+  noise into a false method claim.
+
+### V5 Final Low-LR Matrix
+
+Using 64 eval samples, three seeds, 32 optimizer updates, and
+`learning_rate=1e-4`:
+
+| Train samples | Standard LoRA | Wake-gentle V3 | Wake-utilization V5 |
+|---:|---:|---:|---:|
+| 8 | 1.760924 | 1.738797 | 1.723933 |
+| 16 | 1.656166 | 1.656163 | 1.656016 |
+| 32 | 1.626196 | 1.625987 | 1.625920 |
+
+The strongest result is still the extreme 8-sample regime, where V5 improves
+standard LoRA by `0.036991` NLL and V3 by `0.014864` NLL. V5 also cuts the
+8-sample final-best gap from `0.070286` for standard LoRA to `0.033167`, which
+supports the intended claim: the method improves final-model sample utilization
+and late-training stability rather than only finding a better early checkpoint.
+
+The 16- and 32-sample rows should be reported conservatively. They show that the
+sample-aware schedule does not hurt when ordinary LoRA already has enough
+signal; they are not the main claim.

@@ -113,34 +113,55 @@ class WakeLoraLoss:
         self,
         lambda_kl: float = 0.1,
         lambda_ce_reuse: float = 0.0,
+        lambda_self_reuse: float = 0.0,
+        lambda_consistency: float = 0.0,
         lambda_segment: float = 0.0,
+        hard_ce_threshold: float = 0.0,
+        hard_ce_min_weight: float = 0.1,
         segment_memory_size: int = 4,
         segment_min_count: int = 0,
         eps: float = 1e-4,
         alpha_min: float = 0.0,
         alpha_max: float = 2.0,
         ce_reuse_max: float = 2.0,
+        self_reuse_max: float = 4.0,
         temperature: float = 1.0,
+        consistency_temperature: float = 1.0,
         collect_segment_features: bool = False,
     ) -> None:
         self.lambda_kl = lambda_kl
         self.lambda_ce_reuse = lambda_ce_reuse
+        self.lambda_self_reuse = lambda_self_reuse
+        self.lambda_consistency = lambda_consistency
         self.lambda_segment = lambda_segment
+        self.hard_ce_threshold = hard_ce_threshold
+        self.hard_ce_min_weight = hard_ce_min_weight
         self.segment_min_count = segment_min_count
         self.eps = eps
         self.alpha_min = alpha_min
         self.alpha_max = alpha_max
         self.ce_reuse_max = ce_reuse_max
+        self.self_reuse_max = self_reuse_max
         self.temperature = temperature
+        self.consistency_temperature = consistency_temperature
         self.collect_segment_features = collect_segment_features
         self.segment_bank = TokenFeatureMemoryBank(memory_size=segment_memory_size)
 
     def __call__(self, model: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
         needs_segment_features = self.lambda_segment > 0 or self.collect_segment_features
         needs_base_forward = self.lambda_kl > 0 or self.lambda_ce_reuse > 0
+        needs_consistency = self.lambda_consistency > 0 and model.training
         outputs_lora = model(**batch, output_hidden_states=needs_segment_features)
         logits_lora = outputs_lora.logits
         ce_lora_tok, mask = token_ce_loss(logits_lora, batch["labels"])
+        if needs_consistency:
+            outputs_lora_2 = model(**batch)
+            logits_lora_2 = outputs_lora_2.logits
+            ce_lora_tok_2, _ = token_ce_loss(logits_lora_2, batch["labels"])
+            ce_objective_tok = 0.5 * (ce_lora_tok + ce_lora_tok_2)
+        else:
+            logits_lora_2 = None
+            ce_objective_tok = ce_lora_tok
 
         if needs_base_forward:
             with torch.no_grad():
@@ -158,9 +179,31 @@ class WakeLoraLoss:
             ce_weight = 1.0 + ce_reuse
         else:
             ce_weight = torch.ones_like(ce_lora_tok)
-        weighted_ce_num = (ce_weight * ce_lora_tok).masked_fill(~mask, 0.0).sum()
+        if self.lambda_self_reuse > 0:
+            self_reuse = self.lambda_self_reuse / (ce_objective_tok.detach() + self.eps)
+            self_reuse = self_reuse.clamp(min=0.0, max=self.self_reuse_max)
+            ce_weight = ce_weight + self_reuse
+        hard_ce_weight = torch.ones_like(ce_lora_tok)
+        if self.hard_ce_threshold > 0:
+            hard_ce_weight = self.hard_ce_threshold / (ce_objective_tok.detach() + self.eps)
+            hard_ce_weight = hard_ce_weight.clamp(min=self.hard_ce_min_weight, max=1.0)
+            ce_weight = ce_weight * hard_ce_weight
+        weighted_ce_num = (ce_weight * ce_objective_tok).masked_fill(~mask, 0.0).sum()
         weighted_ce_den = ce_weight.masked_fill(~mask, 0.0).sum().clamp_min(1.0)
         ce_lora = weighted_ce_num / weighted_ce_den
+
+        consistency_loss = logits_lora.new_zeros(())
+        if logits_lora_2 is not None:
+            lora_shift_1, _, _ = shifted_logits_and_labels(logits_lora, batch["labels"])
+            lora_shift_2, _, _ = shifted_logits_and_labels(logits_lora_2, batch["labels"])
+            temp_cons = self.consistency_temperature
+            log_p_1 = F.log_softmax(lora_shift_1.float() / temp_cons, dim=-1)
+            log_p_2 = F.log_softmax(lora_shift_2.float() / temp_cons, dim=-1)
+            p_1 = log_p_1.exp()
+            p_2 = log_p_2.exp()
+            kl_12 = F.kl_div(log_p_1, p_2.detach(), reduction="none").sum(dim=-1)
+            kl_21 = F.kl_div(log_p_2, p_1.detach(), reduction="none").sum(dim=-1)
+            consistency_loss = masked_mean(0.5 * (kl_12 + kl_21) * (temp_cons * temp_cons), mask)
 
         if self.lambda_kl > 0 and logits_base is not None:
             lora_shift, _, _ = shifted_logits_and_labels(logits_lora, batch["labels"])
@@ -209,15 +252,28 @@ class WakeLoraLoss:
                 segment_metrics["segment_memory_tokens"] = float(len(self.segment_bank.features))
                 segment_metrics["segment_reliable_ratio"] = float(reliable.float().mean().detach().cpu())
 
-        total = ce_lora + wake_kl + self.lambda_segment * segment_loss
+        total = ce_lora + wake_kl + self.lambda_segment * segment_loss + self.lambda_consistency * consistency_loss
 
         metrics = {
             "loss": float(total.detach().cpu()),
             "ce_lora": float(ce_lora.detach().cpu()),
             "wake_kl": float(wake_kl.detach().cpu()),
+            "consistency_loss": float(consistency_loss.detach().cpu()),
             "ce_base": float(masked_mean(ce_base_tok, mask).detach().cpu()),
             "alpha_mean": float(masked_mean(alpha, mask).detach().cpu()),
             "ce_reuse_weight_mean": float(masked_mean(ce_weight, mask).detach().cpu()),
+            "hard_ce_weight_mean": float(masked_mean(hard_ce_weight, mask).detach().cpu()),
+            "ce_weight_ess_ratio": float(
+                (
+                    ce_weight.masked_fill(~mask, 0.0).sum().pow(2)
+                    / (
+                        ce_weight.masked_fill(~mask, 0.0).pow(2).sum()
+                        * mask.float().sum().clamp_min(1.0)
+                    ).clamp_min(1e-8)
+                )
+                .detach()
+                .cpu()
+            ),
             "token_count": float(mask.float().sum().detach().cpu()),
         }
         metrics.update(segment_metrics)

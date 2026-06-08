@@ -51,13 +51,19 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--lora_dropout", type=float, default=0.05)
     parser.add_argument("--lambda_kl", type=float, default=0.1)
     parser.add_argument("--lambda_ce_reuse", type=float, default=0.0)
+    parser.add_argument("--lambda_self_reuse", type=float, default=0.0)
+    parser.add_argument("--lambda_consistency", type=float, default=0.0)
     parser.add_argument("--lambda_segment", type=float, default=0.0)
+    parser.add_argument("--hard_ce_threshold", type=float, default=0.0)
+    parser.add_argument("--hard_ce_min_weight", type=float, default=0.1)
     parser.add_argument("--segment_memory_size", type=int, default=4)
     parser.add_argument("--segment_min_count", type=int, default=0)
     parser.add_argument("--alpha_min", type=float, default=0.0)
     parser.add_argument("--alpha_max", type=float, default=2.0)
     parser.add_argument("--ce_reuse_max", type=float, default=2.0)
+    parser.add_argument("--self_reuse_max", type=float, default=4.0)
     parser.add_argument("--wake_temperature", type=float, default=1.0)
+    parser.add_argument("--consistency_temperature", type=float, default=1.0)
     parser.add_argument(
         "--wake_start_ratio",
         type=float,
@@ -220,16 +226,24 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
     wake_loss = WakeLoraLoss(
         lambda_kl=args.lambda_kl,
         lambda_ce_reuse=args.lambda_ce_reuse,
+        lambda_self_reuse=args.lambda_self_reuse,
+        lambda_consistency=args.lambda_consistency,
         lambda_segment=args.lambda_segment,
+        hard_ce_threshold=args.hard_ce_threshold,
+        hard_ce_min_weight=args.hard_ce_min_weight,
         segment_memory_size=args.segment_memory_size,
         segment_min_count=args.segment_min_count,
         alpha_min=args.alpha_min,
         alpha_max=args.alpha_max,
         ce_reuse_max=args.ce_reuse_max,
+        self_reuse_max=args.self_reuse_max,
         temperature=args.wake_temperature,
+        consistency_temperature=args.consistency_temperature,
         collect_segment_features=args.lambda_segment > 0 and args.wake_start_ratio > 0,
     )
     base_lambda_kl = args.lambda_kl
+    base_lambda_self_reuse = args.lambda_self_reuse
+    base_lambda_consistency = args.lambda_consistency
     base_lambda_segment = args.lambda_segment
     device = model_input_device(model)
     best_nll = float("inf")
@@ -250,6 +264,8 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
                     ramp_ratio=args.wake_ramp_ratio,
                 )
                 wake_loss.lambda_kl = base_lambda_kl * wake_multiplier
+                wake_loss.lambda_self_reuse = base_lambda_self_reuse * wake_multiplier
+                wake_loss.lambda_consistency = base_lambda_consistency * wake_multiplier
                 wake_loss.lambda_segment = base_lambda_segment * wake_multiplier
                 loss, metrics = wake_loss(model, batch)
                 metrics["wake_multiplier"] = wake_multiplier

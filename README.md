@@ -206,6 +206,45 @@ wake_start_ratio = 0.25 and wake_ramp_ratio = 0.125, if n <= 8
 wake_start_ratio = 0 and wake_ramp_ratio = 0,         if n > 8
 ```
 
+`wake_utilization` is the current candidate method. It keeps the V3 delayed
+KL+segment anchor at 8 samples, adds normalized current-model token reuse and
+two-view dropout consistency, keeps only consistency at 16 samples, and disables
+Wake-utilization terms above 16 samples:
+
+```text
+if n <= 8:
+    lambda_kl = 0.1
+    lambda_segment = 0.005
+    lambda_self_reuse = 0.025
+    lambda_consistency = 0.5
+    wake_start_ratio = 0.25
+    wake_ramp_ratio = 0.125
+elif n <= 16:
+    lambda_consistency = 0.5
+else:
+    all Wake-utilization terms = 0
+```
+
+Clean three-seed low-LR fixed-update results:
+
+| Train samples | Standard LoRA | Wake-gentle | Wake-utilization |
+|---:|---:|---:|---:|
+| 8 | 1.760924 | 1.738797 | 1.723933 |
+| 16 | 1.656166 | 1.656163 | 1.656016 |
+| 32 | 1.626196 | 1.625987 | 1.625920 |
+
+Run the candidate matrix with:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/run_low_data_matrix.py \
+  --output_prefix v5_utilization_final_lr1e4 \
+  --samples 8,16,32 \
+  --seeds 42,43,44 \
+  --methods standard,wake_utilization \
+  --target_updates 32 \
+  --learning_rate 1e-4
+```
+
 `wake_reliable` uses the same schedule but only applies the segment memory loss
 when a target token already has at least two historical hidden states in the
 memory bank. This guards the extreme 8/16-sample regime, where the memory anchor

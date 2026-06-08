@@ -59,6 +59,123 @@ METHODS = {
         "wake_start_ratio": "gentle",
         "wake_ramp_ratio": "gentle",
     },
+    "wake_gentle_self_reuse": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "gentle",
+        "lambda_segment": "gentle",
+        "lambda_self_reuse": "self_reuse",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_gentle_consistency": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "gentle",
+        "lambda_segment": "gentle",
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_gentle_reuse_consistency": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "gentle",
+        "lambda_segment": "gentle",
+        "lambda_self_reuse": "self_reuse",
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_utilization": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "utilization",
+        "lambda_segment": "utilization",
+        "lambda_self_reuse": "utilization",
+        "lambda_consistency": "utilization",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_self_reuse": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_self_reuse": "self_reuse",
+    },
+    "wake_self_reuse_delayed": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_self_reuse": "self_reuse",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_self_reuse_segment": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": "gentle",
+        "lambda_self_reuse": "self_reuse",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_consistency": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_consistency": "consistency",
+    },
+    "wake_consistency_delayed": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_consistency_segment": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": "gentle",
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_reuse_consistency": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_self_reuse": "self_reuse",
+        "lambda_consistency": "consistency",
+    },
+    "wake_reuse_consistency_delayed": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_self_reuse": "self_reuse",
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_reuse_consistency_segment": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": "gentle",
+        "lambda_self_reuse": "self_reuse",
+        "lambda_consistency": "consistency",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_hard_cap": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "hard_ce_threshold": "hard_cap",
+    },
+    "wake_hard_cap_segment": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": "gentle",
+        "hard_ce_threshold": "hard_cap",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
     "wake_reliable": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": "scheduled",
@@ -128,6 +245,12 @@ def gentle_wake_ratio(sample_count: int, ratio: float, max_samples: int) -> floa
     return 0.0
 
 
+def gated_value(sample_count: int, value: float, max_samples: int) -> float:
+    if sample_count <= max_samples:
+        return value
+    return 0.0
+
+
 def output_dir_name(
     prefix: str,
     samples: int,
@@ -135,12 +258,24 @@ def output_dir_name(
     method: str,
     lambda_kl: float,
     lambda_segment: float,
+    lambda_self_reuse: float = 0.0,
+    lambda_consistency: float = 0.0,
+    hard_ce_threshold: float = 0.0,
     wake_start_ratio: float = 0.0,
     wake_ramp_ratio: float = 0.0,
 ) -> str:
     kl_tag = f"kl{lambda_kl:.5g}".replace(".", "p")
     seg_tag = f"seg{lambda_segment:.5g}".replace(".", "p")
     name = f"{prefix}_n{samples}_s{seed}_{method}_{kl_tag}_{seg_tag}"
+    if lambda_self_reuse > 0:
+        self_tag = f"sr{lambda_self_reuse:.5g}".replace(".", "p")
+        name = f"{name}_{self_tag}"
+    if lambda_consistency > 0:
+        cons_tag = f"cons{lambda_consistency:.5g}".replace(".", "p")
+        name = f"{name}_{cons_tag}"
+    if hard_ce_threshold > 0:
+        hard_tag = f"hct{hard_ce_threshold:.5g}".replace(".", "p")
+        name = f"{name}_{hard_tag}"
     if wake_start_ratio > 0 or wake_ramp_ratio > 0:
         start_tag = f"ws{wake_start_ratio:.5g}".replace(".", "p")
         ramp_tag = f"wr{wake_ramp_ratio:.5g}".replace(".", "p")
@@ -195,6 +330,12 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             base_lambda=args.gentle_base_kl,
             max_samples=args.gentle_kl_max_samples,
         )
+    elif lambda_kl == "utilization":
+        lambda_kl = gated_value(
+            sample_count=samples,
+            value=args.gentle_base_kl,
+            max_samples=args.utilization_kl_max_samples,
+        )
     lambda_segment = spec["lambda_segment"]
     if lambda_segment == "scheduled":
         lambda_segment = scheduled_segment(
@@ -220,7 +361,37 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             large_ref_samples=args.gentle_large_ref_samples,
             power=args.gentle_segment_power,
         )
+    elif lambda_segment == "utilization":
+        lambda_segment = gated_value(
+            sample_count=samples,
+            value=args.gentle_extreme_segment,
+            max_samples=args.utilization_segment_max_samples,
+        )
     lambda_segment = float(lambda_segment)
+    lambda_self_reuse = spec.get("lambda_self_reuse", 0.0)
+    if lambda_self_reuse == "self_reuse":
+        lambda_self_reuse = args.self_reuse_lambda
+    elif lambda_self_reuse == "utilization":
+        lambda_self_reuse = gated_value(
+            sample_count=samples,
+            value=args.self_reuse_lambda,
+            max_samples=args.utilization_self_reuse_max_samples,
+        )
+    lambda_self_reuse = float(lambda_self_reuse)
+    lambda_consistency = spec.get("lambda_consistency", 0.0)
+    if lambda_consistency == "consistency":
+        lambda_consistency = args.consistency_lambda
+    elif lambda_consistency == "utilization":
+        lambda_consistency = gated_value(
+            sample_count=samples,
+            value=args.consistency_lambda,
+            max_samples=args.utilization_consistency_max_samples,
+        )
+    lambda_consistency = float(lambda_consistency)
+    hard_ce_threshold = spec.get("hard_ce_threshold", 0.0)
+    if hard_ce_threshold == "hard_cap":
+        hard_ce_threshold = args.hard_ce_threshold
+    hard_ce_threshold = float(hard_ce_threshold)
     segment_min_count = int(spec.get("segment_min_count", args.segment_min_count))
     wake_start_ratio = spec.get("wake_start_ratio", args.wake_start_ratio)
     if wake_start_ratio == "gentle":
@@ -246,6 +417,9 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         method,
         float(lambda_kl),
         lambda_segment,
+        lambda_self_reuse,
+        lambda_consistency,
+        hard_ce_threshold,
         wake_start_ratio,
         wake_ramp_ratio,
     )
@@ -277,12 +451,24 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(float(lambda_kl)),
         "--lambda_ce_reuse",
         "0.0",
+        "--lambda_self_reuse",
+        str(lambda_self_reuse),
+        "--lambda_consistency",
+        str(lambda_consistency),
         "--lambda_segment",
         str(lambda_segment),
+        "--hard_ce_threshold",
+        str(hard_ce_threshold),
+        "--hard_ce_min_weight",
+        str(args.hard_ce_min_weight),
         "--segment_memory_size",
         str(args.segment_memory_size),
         "--segment_min_count",
         str(segment_min_count),
+        "--self_reuse_max",
+        str(args.self_reuse_max),
+        "--consistency_temperature",
+        str(args.consistency_temperature),
         "--wake_start_ratio",
         str(wake_start_ratio),
         "--wake_ramp_ratio",
@@ -320,6 +506,12 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--segment_memory_size", type=int, default=4)
     parser.add_argument("--segment_min_count", type=int, default=0)
+    parser.add_argument("--self_reuse_lambda", type=float, default=0.025)
+    parser.add_argument("--self_reuse_max", type=float, default=4.0)
+    parser.add_argument("--consistency_lambda", type=float, default=0.5)
+    parser.add_argument("--consistency_temperature", type=float, default=1.0)
+    parser.add_argument("--hard_ce_threshold", type=float, default=1.5)
+    parser.add_argument("--hard_ce_min_weight", type=float, default=0.1)
     parser.add_argument("--adaptive_base_kl", type=float, default=0.1)
     parser.add_argument("--adaptive_ref_samples", type=int, default=32)
     parser.add_argument("--adaptive_power", type=float, default=2.0)
@@ -344,6 +536,10 @@ def main() -> None:
     parser.add_argument("--gentle_delay_max_samples", type=int, default=8)
     parser.add_argument("--gentle_wake_start_ratio", type=float, default=0.25)
     parser.add_argument("--gentle_wake_ramp_ratio", type=float, default=0.125)
+    parser.add_argument("--utilization_kl_max_samples", type=int, default=8)
+    parser.add_argument("--utilization_segment_max_samples", type=int, default=8)
+    parser.add_argument("--utilization_self_reuse_max_samples", type=int, default=8)
+    parser.add_argument("--utilization_consistency_max_samples", type=int, default=16)
     parser.add_argument("--wake_start_ratio", type=float, default=0.0)
     parser.add_argument("--wake_ramp_ratio", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")

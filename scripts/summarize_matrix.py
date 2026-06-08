@@ -80,7 +80,7 @@ def parse_matrix_name(path: Path) -> tuple[int, int, str] | None:
             break
     if sample is None or seed is None or not method_parts:
         return None
-    method_parts = [x for x in method_parts if not re.fullmatch(r"(kl|seg|ws|wr)[0-9p]+", x)]
+    method_parts = [x for x in method_parts if not re.fullmatch(r"(kl|seg|sr|cons|hct|ws|wr)[0-9p]+", x)]
     method = "_".join(method_parts)
     return sample, seed, method
 
