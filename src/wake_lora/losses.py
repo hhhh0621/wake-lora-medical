@@ -108,6 +108,58 @@ def segment_distance(
     return dist.mean(), metrics
 
 
+def simplex_projection_loss(
+    point: torch.Tensor,
+    anchor_ids: torch.Tensor,
+    output_weight: torch.Tensor,
+    temperature: float = 0.2,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    anchors = output_weight[anchor_ids].float().detach()
+    point_norm = F.normalize(point.float(), dim=-1)
+    anchor_norm = F.normalize(anchors, dim=-1)
+    logits = torch.einsum("nh,nkh->nk", point_norm, anchor_norm) / max(temperature, 1e-4)
+    weights = F.softmax(logits, dim=-1)
+    closest = torch.einsum("nk,nkh->nh", weights, anchor_norm)
+    dist = ((point_norm - closest) ** 2).sum(dim=-1)
+    entropy = -(weights * weights.clamp_min(1e-8).log()).sum(dim=-1)
+    metrics = {
+        "simplex_loss": float(dist.mean().detach().cpu()),
+        "simplex_anchor_count": float(anchor_ids.size(1)),
+        "simplex_weight_entropy": float(entropy.mean().detach().cpu()),
+        "simplex_max_weight": float(weights.max(dim=-1).values.mean().detach().cpu()),
+    }
+    return dist.mean(), metrics
+
+
+def simplex_ce_loss(
+    lora_logits: torch.Tensor,
+    base_logits: torch.Tensor,
+    target_ids: torch.Tensor,
+    top_k: int,
+    label_mix: float,
+    temperature: float,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    top_k = max(1, min(top_k, base_logits.size(-1)))
+    label_mix = min(max(label_mix, 0.0), 1.0)
+    top_base = base_logits.float().topk(k=top_k, dim=-1)
+    anchor_ids = torch.cat([target_ids.unsqueeze(1), top_base.indices], dim=1)
+    base_weights = F.softmax(top_base.values / max(temperature, 1e-4), dim=-1)
+    q = lora_logits.new_zeros(anchor_ids.shape, dtype=torch.float32)
+    q[:, 0] = 1.0 - label_mix
+    q[:, 1:] = label_mix * base_weights
+    log_probs = F.log_softmax(lora_logits.float(), dim=-1)
+    anchor_log_probs = log_probs.gather(dim=-1, index=anchor_ids)
+    token_loss = -(q * anchor_log_probs).sum(dim=-1)
+    metrics = {
+        "simplex_ce_loss": float(token_loss.mean().detach().cpu()),
+        "simplex_ce_target_mass": float(q[:, 0].mean().detach().cpu()),
+        "simplex_ce_base_entropy": float(
+            (-(base_weights * base_weights.clamp_min(1e-8).log()).sum(dim=-1)).mean().detach().cpu()
+        ),
+    }
+    return token_loss.mean(), metrics
+
+
 class WakeLoraLoss:
     def __init__(
         self,
@@ -116,10 +168,14 @@ class WakeLoraLoss:
         lambda_self_reuse: float = 0.0,
         lambda_consistency: float = 0.0,
         lambda_segment: float = 0.0,
+        lambda_simplex: float = 0.0,
+        lambda_simplex_ce: float = 0.0,
         hard_ce_threshold: float = 0.0,
         hard_ce_min_weight: float = 0.1,
         segment_memory_size: int = 4,
         segment_min_count: int = 0,
+        simplex_top_k: int = 8,
+        simplex_label_mix: float = 0.2,
         eps: float = 1e-4,
         alpha_min: float = 0.0,
         alpha_max: float = 2.0,
@@ -127,6 +183,7 @@ class WakeLoraLoss:
         self_reuse_max: float = 4.0,
         temperature: float = 1.0,
         consistency_temperature: float = 1.0,
+        simplex_temperature: float = 0.2,
         collect_segment_features: bool = False,
     ) -> None:
         self.lambda_kl = lambda_kl
@@ -134,9 +191,13 @@ class WakeLoraLoss:
         self.lambda_self_reuse = lambda_self_reuse
         self.lambda_consistency = lambda_consistency
         self.lambda_segment = lambda_segment
+        self.lambda_simplex = lambda_simplex
+        self.lambda_simplex_ce = lambda_simplex_ce
         self.hard_ce_threshold = hard_ce_threshold
         self.hard_ce_min_weight = hard_ce_min_weight
         self.segment_min_count = segment_min_count
+        self.simplex_top_k = simplex_top_k
+        self.simplex_label_mix = simplex_label_mix
         self.eps = eps
         self.alpha_min = alpha_min
         self.alpha_max = alpha_max
@@ -144,12 +205,18 @@ class WakeLoraLoss:
         self.self_reuse_max = self_reuse_max
         self.temperature = temperature
         self.consistency_temperature = consistency_temperature
+        self.simplex_temperature = simplex_temperature
         self.collect_segment_features = collect_segment_features
         self.segment_bank = TokenFeatureMemoryBank(memory_size=segment_memory_size)
 
     def __call__(self, model: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
-        needs_segment_features = self.lambda_segment > 0 or self.collect_segment_features
-        needs_base_forward = self.lambda_kl > 0 or self.lambda_ce_reuse > 0
+        needs_segment_features = self.lambda_segment > 0 or self.lambda_simplex > 0 or self.collect_segment_features
+        needs_base_forward = (
+            self.lambda_kl > 0
+            or self.lambda_ce_reuse > 0
+            or self.lambda_simplex > 0
+            or self.lambda_simplex_ce > 0
+        )
         needs_consistency = self.lambda_consistency > 0 and model.training
         outputs_lora = model(**batch, output_hidden_states=needs_segment_features)
         logits_lora = outputs_lora.logits
@@ -252,7 +319,62 @@ class WakeLoraLoss:
                 segment_metrics["segment_memory_tokens"] = float(len(self.segment_bank.features))
                 segment_metrics["segment_reliable_ratio"] = float(reliable.float().mean().detach().cpu())
 
-        total = ce_lora + wake_kl + self.lambda_segment * segment_loss + self.lambda_consistency * consistency_loss
+        simplex_loss = logits_lora.new_zeros(())
+        simplex_metrics = {
+            "simplex_loss": 0.0,
+            "simplex_anchor_count": 0.0,
+            "simplex_weight_entropy": 0.0,
+            "simplex_max_weight": 0.0,
+        }
+        if self.lambda_simplex > 0 and logits_base is not None and needs_segment_features:
+            hidden = outputs_lora.hidden_states[-1][:, :-1, :].contiguous()
+            shift_labels = batch["labels"][:, 1:].contiguous()
+            valid_hidden = hidden[mask].float()
+            valid_labels = shift_labels[mask]
+            if valid_hidden.numel() > 0:
+                base_shift, _, _ = shifted_logits_and_labels(logits_base, batch["labels"])
+                valid_base_logits = base_shift[mask].float()
+                top_k = max(1, min(self.simplex_top_k, valid_base_logits.size(-1)))
+                top_ids = valid_base_logits.topk(k=top_k, dim=-1).indices
+                anchor_ids = torch.cat([valid_labels.unsqueeze(1), top_ids], dim=1)
+                output_weight = model.get_output_embeddings().weight
+                simplex_loss, simplex_metrics = simplex_projection_loss(
+                    valid_hidden,
+                    anchor_ids,
+                    output_weight,
+                    temperature=self.simplex_temperature,
+                )
+
+        simplex_ce = logits_lora.new_zeros(())
+        simplex_ce_metrics = {
+            "simplex_ce_loss": 0.0,
+            "simplex_ce_target_mass": 0.0,
+            "simplex_ce_base_entropy": 0.0,
+        }
+        if self.lambda_simplex_ce > 0 and logits_base is not None:
+            lora_shift, shift_labels, _ = shifted_logits_and_labels(logits_lora, batch["labels"])
+            base_shift, _, _ = shifted_logits_and_labels(logits_base, batch["labels"])
+            valid_lora_logits = lora_shift[mask].float()
+            valid_base_logits = base_shift[mask].float()
+            valid_labels = shift_labels[mask]
+            if valid_lora_logits.numel() > 0:
+                simplex_ce, simplex_ce_metrics = simplex_ce_loss(
+                    valid_lora_logits,
+                    valid_base_logits,
+                    valid_labels,
+                    top_k=self.simplex_top_k,
+                    label_mix=self.simplex_label_mix,
+                    temperature=self.simplex_temperature,
+                )
+
+        total = (
+            ce_lora
+            + wake_kl
+            + self.lambda_segment * segment_loss
+            + self.lambda_consistency * consistency_loss
+            + self.lambda_simplex * simplex_loss
+            + self.lambda_simplex_ce * simplex_ce
+        )
 
         metrics = {
             "loss": float(total.detach().cpu()),
@@ -277,4 +399,6 @@ class WakeLoraLoss:
             "token_count": float(mask.float().sum().detach().cpu()),
         }
         metrics.update(segment_metrics)
+        metrics.update(simplex_metrics)
+        metrics.update(simplex_ce_metrics)
         return total, metrics

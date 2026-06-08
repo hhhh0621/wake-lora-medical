@@ -93,6 +93,42 @@ METHODS = {
         "wake_start_ratio": "gentle",
         "wake_ramp_ratio": "gentle",
     },
+    "wake_simplex": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_simplex": "simplex",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_simplex_ce": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": 0.0,
+        "lambda_segment": 0.0,
+        "lambda_simplex_ce": "simplex_ce",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_utilization_simplex": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "utilization",
+        "lambda_segment": "utilization",
+        "lambda_self_reuse": "utilization",
+        "lambda_consistency": "utilization",
+        "lambda_simplex": "utilization",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
+    "wake_utilization_simplex_ce": {
+        "skip": ["--skip_base", "--skip_standard"],
+        "lambda_kl": "utilization",
+        "lambda_segment": "utilization",
+        "lambda_self_reuse": "utilization",
+        "lambda_consistency": "utilization",
+        "lambda_simplex_ce": "utilization",
+        "wake_start_ratio": "gentle",
+        "wake_ramp_ratio": "gentle",
+    },
     "wake_self_reuse": {
         "skip": ["--skip_base", "--skip_standard"],
         "lambda_kl": 0.0,
@@ -260,6 +296,8 @@ def output_dir_name(
     lambda_segment: float,
     lambda_self_reuse: float = 0.0,
     lambda_consistency: float = 0.0,
+    lambda_simplex: float = 0.0,
+    lambda_simplex_ce: float = 0.0,
     hard_ce_threshold: float = 0.0,
     wake_start_ratio: float = 0.0,
     wake_ramp_ratio: float = 0.0,
@@ -273,6 +311,12 @@ def output_dir_name(
     if lambda_consistency > 0:
         cons_tag = f"cons{lambda_consistency:.5g}".replace(".", "p")
         name = f"{name}_{cons_tag}"
+    if lambda_simplex > 0:
+        simplex_tag = f"simp{lambda_simplex:.5g}".replace(".", "p")
+        name = f"{name}_{simplex_tag}"
+    if lambda_simplex_ce > 0:
+        simplex_ce_tag = f"sce{lambda_simplex_ce:.5g}".replace(".", "p")
+        name = f"{name}_{simplex_ce_tag}"
     if hard_ce_threshold > 0:
         hard_tag = f"hct{hard_ce_threshold:.5g}".replace(".", "p")
         name = f"{name}_{hard_tag}"
@@ -388,6 +432,26 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
             max_samples=args.utilization_consistency_max_samples,
         )
     lambda_consistency = float(lambda_consistency)
+    lambda_simplex = spec.get("lambda_simplex", 0.0)
+    if lambda_simplex == "simplex":
+        lambda_simplex = args.simplex_lambda
+    elif lambda_simplex == "utilization":
+        lambda_simplex = gated_value(
+            sample_count=samples,
+            value=args.simplex_lambda,
+            max_samples=args.utilization_simplex_max_samples,
+        )
+    lambda_simplex = float(lambda_simplex)
+    lambda_simplex_ce = spec.get("lambda_simplex_ce", 0.0)
+    if lambda_simplex_ce == "simplex_ce":
+        lambda_simplex_ce = args.simplex_ce_lambda
+    elif lambda_simplex_ce == "utilization":
+        lambda_simplex_ce = gated_value(
+            sample_count=samples,
+            value=args.simplex_ce_lambda,
+            max_samples=args.utilization_simplex_ce_max_samples,
+        )
+    lambda_simplex_ce = float(lambda_simplex_ce)
     hard_ce_threshold = spec.get("hard_ce_threshold", 0.0)
     if hard_ce_threshold == "hard_cap":
         hard_ce_threshold = args.hard_ce_threshold
@@ -419,6 +483,8 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         lambda_segment,
         lambda_self_reuse,
         lambda_consistency,
+        lambda_simplex,
+        lambda_simplex_ce,
         hard_ce_threshold,
         wake_start_ratio,
         wake_ramp_ratio,
@@ -457,6 +523,10 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(lambda_consistency),
         "--lambda_segment",
         str(lambda_segment),
+        "--lambda_simplex",
+        str(lambda_simplex),
+        "--lambda_simplex_ce",
+        str(lambda_simplex_ce),
         "--hard_ce_threshold",
         str(hard_ce_threshold),
         "--hard_ce_min_weight",
@@ -465,10 +535,16 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(args.segment_memory_size),
         "--segment_min_count",
         str(segment_min_count),
+        "--simplex_top_k",
+        str(args.simplex_top_k),
+        "--simplex_label_mix",
+        str(args.simplex_label_mix),
         "--self_reuse_max",
         str(args.self_reuse_max),
         "--consistency_temperature",
         str(args.consistency_temperature),
+        "--simplex_temperature",
+        str(args.simplex_temperature),
         "--wake_start_ratio",
         str(wake_start_ratio),
         "--wake_ramp_ratio",
@@ -510,6 +586,11 @@ def main() -> None:
     parser.add_argument("--self_reuse_max", type=float, default=4.0)
     parser.add_argument("--consistency_lambda", type=float, default=0.5)
     parser.add_argument("--consistency_temperature", type=float, default=1.0)
+    parser.add_argument("--simplex_lambda", type=float, default=0.01)
+    parser.add_argument("--simplex_ce_lambda", type=float, default=0.05)
+    parser.add_argument("--simplex_top_k", type=int, default=8)
+    parser.add_argument("--simplex_label_mix", type=float, default=0.2)
+    parser.add_argument("--simplex_temperature", type=float, default=0.2)
     parser.add_argument("--hard_ce_threshold", type=float, default=1.5)
     parser.add_argument("--hard_ce_min_weight", type=float, default=0.1)
     parser.add_argument("--adaptive_base_kl", type=float, default=0.1)
@@ -540,6 +621,8 @@ def main() -> None:
     parser.add_argument("--utilization_segment_max_samples", type=int, default=8)
     parser.add_argument("--utilization_self_reuse_max_samples", type=int, default=8)
     parser.add_argument("--utilization_consistency_max_samples", type=int, default=16)
+    parser.add_argument("--utilization_simplex_max_samples", type=int, default=8)
+    parser.add_argument("--utilization_simplex_ce_max_samples", type=int, default=8)
     parser.add_argument("--wake_start_ratio", type=float, default=0.0)
     parser.add_argument("--wake_ramp_ratio", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")

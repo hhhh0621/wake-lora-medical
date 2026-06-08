@@ -54,16 +54,21 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--lambda_self_reuse", type=float, default=0.0)
     parser.add_argument("--lambda_consistency", type=float, default=0.0)
     parser.add_argument("--lambda_segment", type=float, default=0.0)
+    parser.add_argument("--lambda_simplex", type=float, default=0.0)
+    parser.add_argument("--lambda_simplex_ce", type=float, default=0.0)
     parser.add_argument("--hard_ce_threshold", type=float, default=0.0)
     parser.add_argument("--hard_ce_min_weight", type=float, default=0.1)
     parser.add_argument("--segment_memory_size", type=int, default=4)
     parser.add_argument("--segment_min_count", type=int, default=0)
+    parser.add_argument("--simplex_top_k", type=int, default=8)
+    parser.add_argument("--simplex_label_mix", type=float, default=0.2)
     parser.add_argument("--alpha_min", type=float, default=0.0)
     parser.add_argument("--alpha_max", type=float, default=2.0)
     parser.add_argument("--ce_reuse_max", type=float, default=2.0)
     parser.add_argument("--self_reuse_max", type=float, default=4.0)
     parser.add_argument("--wake_temperature", type=float, default=1.0)
     parser.add_argument("--consistency_temperature", type=float, default=1.0)
+    parser.add_argument("--simplex_temperature", type=float, default=0.2)
     parser.add_argument(
         "--wake_start_ratio",
         type=float,
@@ -229,22 +234,29 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         lambda_self_reuse=args.lambda_self_reuse,
         lambda_consistency=args.lambda_consistency,
         lambda_segment=args.lambda_segment,
+        lambda_simplex=args.lambda_simplex,
+        lambda_simplex_ce=args.lambda_simplex_ce,
         hard_ce_threshold=args.hard_ce_threshold,
         hard_ce_min_weight=args.hard_ce_min_weight,
         segment_memory_size=args.segment_memory_size,
         segment_min_count=args.segment_min_count,
+        simplex_top_k=args.simplex_top_k,
+        simplex_label_mix=args.simplex_label_mix,
         alpha_min=args.alpha_min,
         alpha_max=args.alpha_max,
         ce_reuse_max=args.ce_reuse_max,
         self_reuse_max=args.self_reuse_max,
         temperature=args.wake_temperature,
         consistency_temperature=args.consistency_temperature,
+        simplex_temperature=args.simplex_temperature,
         collect_segment_features=args.lambda_segment > 0 and args.wake_start_ratio > 0,
     )
     base_lambda_kl = args.lambda_kl
     base_lambda_self_reuse = args.lambda_self_reuse
     base_lambda_consistency = args.lambda_consistency
     base_lambda_segment = args.lambda_segment
+    base_lambda_simplex = args.lambda_simplex
+    base_lambda_simplex_ce = args.lambda_simplex_ce
     device = model_input_device(model)
     best_nll = float("inf")
     global_step = 0
@@ -267,6 +279,8 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
                 wake_loss.lambda_self_reuse = base_lambda_self_reuse * wake_multiplier
                 wake_loss.lambda_consistency = base_lambda_consistency * wake_multiplier
                 wake_loss.lambda_segment = base_lambda_segment * wake_multiplier
+                wake_loss.lambda_simplex = base_lambda_simplex * wake_multiplier
+                wake_loss.lambda_simplex_ce = base_lambda_simplex_ce * wake_multiplier
                 loss, metrics = wake_loss(model, batch)
                 metrics["wake_multiplier"] = wake_multiplier
             else:

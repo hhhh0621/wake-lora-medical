@@ -354,3 +354,84 @@ and late-training stability rather than only finding a better early checkpoint.
 The 16- and 32-sample rows should be reported conservatively. They show that the
 sample-aware schedule does not hurt when ordinary LoRA already has enough
 signal; they are not the main claim.
+
+## V6: High-Dimensional Simplex Probes
+
+The one-dimensional segment term may be too narrow for language modeling. A
+higher-dimensional translation was added in two forms:
+
+```text
+hidden simplex:
+    anchors = {target token embedding} union {base top-k token embeddings}
+    loss = distance(hidden, soft_projection_to_convex_hull(anchors))
+
+probability simplex CE:
+    q = (1 - mix) * one_hot(target) + mix * P_base(top-k)
+    loss = CE(P_lora restricted to local top-k simplex, q)
+```
+
+Implementation methods:
+
+- `wake_simplex`
+- `wake_utilization_simplex`
+- `wake_simplex_ce`
+- `wake_utilization_simplex_ce`
+
+### V6 Probe Findings
+
+The hidden-simplex projection is stable but weak. On 8 samples, three seeds,
+`learning_rate=1e-4`, 32 updates, `top_k=16`, `temperature=0.5`, and
+`lambda_simplex=0.01`:
+
+| Method | Mean final NLL | Mean best NLL | Mean final-best gap |
+|---|---:|---:|---:|
+| Wake-utilization V5 | 1.723933 | 1.690766 | 0.033167 |
+| Wake-utilization + hidden simplex | 1.723592 | 1.691019 | 0.032573 |
+
+This is a real but tiny change (`0.000341` NLL). It should be recorded as a
+weak positive diagnostic, not as a main method contribution.
+
+The probability-simplex CE variant is negative under the tested settings. With
+seed 42, `lambda_simplex_ce` values of `0.025`, `0.05`, and `0.1` all make
+Wake-utilization worse. Reducing `label_mix` to `0.05` or `0.1` still does not
+beat V5. The likely reason is that base top-k probability mass introduces
+neighbor tokens that are plausible to the base model but not necessarily useful
+for the supervised medical target.
+
+## Stronger Baseline Sanity Check
+
+The earlier V5 matrix used `learning_rate=1e-4`. A stricter LR sanity check
+shows that standard LoRA becomes much stronger at lower LR:
+
+| 8-sample setting | Standard LoRA | Wake-utilization |
+|---|---:|---:|
+| 32 updates, `lr=1e-4` | 1.760924 | 1.723933 |
+| 32 updates, `lr=7.5e-5` | 1.708081 | 1.706623 |
+| 32 updates, `lr=5e-5` | 1.705007 | 1.712501 |
+
+This weakens the original V5 claim. Against a strongly tuned standard LoRA,
+the current Wake-utilization schedule is no longer clearly better at 32
+updates. This should guide the next round: the method must beat a tuned
+standard baseline, not only the first low-LR baseline.
+
+Wake-utilization is still clearly useful in the long-budget overfitting regime:
+
+| 8-sample setting | Standard LoRA | Wake-utilization |
+|---|---:|---:|
+| 48 updates, `lr=5e-5`, strong Wake | 1.716109 | 1.711938 |
+| 64 updates, `lr=5e-5`, default Wake | 1.849259 | 1.745226 |
+| 64 updates, `lr=5e-5`, strong Wake | 1.849259 | 1.713941 |
+
+The 64-update result supports a narrower but more robust claim: Wake-style
+sample utilization strongly reduces late-training drift when the tiny training
+set is reused many times. It is not yet enough for the final paper claim,
+because tuned 32-update standard LoRA remains competitive.
+
+Next directions:
+
+- Search for a schedule that keeps the 32-update standard LoRA plasticity while
+  inheriting the 48/64-update Wake stability.
+- Try optimizer-state or adapter-weight averaging as a fair no-validation
+  alternative to best-checkpoint selection.
+- Validate on a second small medical dataset before treating any single-dataset
+  improvement as publishable.

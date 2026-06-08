@@ -233,6 +233,12 @@ Clean three-seed low-LR fixed-update results:
 | 16 | 1.656166 | 1.656163 | 1.656016 |
 | 32 | 1.626196 | 1.625987 | 1.625920 |
 
+Stronger LR sanity checks show that standard LoRA is very competitive at
+`learning_rate=5e-5` for 32 updates. The current strongest Wake-utilization
+claim is therefore narrower: it substantially reduces late-training drift when
+the 8-sample set is reused for longer budgets. See
+`docs/method_note.md` for the full positive and negative ablations.
+
 Run the candidate matrix with:
 
 ```bash
