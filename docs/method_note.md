@@ -435,3 +435,64 @@ Next directions:
   alternative to best-checkpoint selection.
 - Validate on a second small medical dataset before treating any single-dataset
   improvement as publishable.
+
+## V7: Training Dynamics and LoRA Tricks
+
+The training loop now logs additional dynamics:
+
+- `grad_norm` before clipping.
+- LoRA trainable parameter norm, RMS, and absolute mean.
+- Weighted regularizer contributions, including `regularizer_total`.
+- CE effective-sample-size ratio for token reweighting.
+
+`scripts/summarize_training_dynamics.py` converts these curves into a compact
+table per matrix run. This makes it easier to see whether a result comes from
+better plasticity, reduced late drift, or over-regularization.
+
+### rsLoRA
+
+PEFT's rank-stabilized LoRA (`use_rslora=True`) was tested because it rescales
+LoRA by `alpha / sqrt(r)` instead of `alpha / r`. In this low-data setting it
+was a negative trick:
+
+| 8 samples, 32 updates, lr=5e-5 | Mean final NLL | Mean best NLL | Gap |
+|---|---:|---:|---:|
+| Standard rsLoRA | 1.948463 | 1.697441 | 0.251021 |
+| Wake-utilization rsLoRA | 1.799848 | 1.697346 | 0.102503 |
+
+Wake reduces the rsLoRA drift substantially, but rsLoRA itself is too unstable
+for this rank/data regime.
+
+### DoRA
+
+DoRA was only probed on seed 42. It made standard LoRA strong and stable
+(`1.654997` final NLL), while Wake+DoRA was slightly worse (`1.664502`).
+This suggests that DoRA's magnitude branch already provides some of the
+stability Wake is trying to enforce, so the current Wake anchor may be too
+conservative when combined with DoRA.
+
+### PiSSA Initialization
+
+PiSSA initialization is the most useful LoRA trick so far. With
+`init_lora_weights=pissa_niter_4`, `lr=5e-5`, and 32 updates:
+
+| Samples | Method | Mean final NLL | Mean best NLL | Gap |
+|---:|---|---:|---:|---:|
+| 8 | Standard PiSSA | 1.765755 | 1.703962 | 0.061793 |
+| 8 | Wake-utilization PiSSA | 1.703131 | 1.700354 | 0.002777 |
+| 16 | Standard PiSSA | 1.678613 | 1.673771 | 0.004842 |
+| 16 | Wake-utilization PiSSA | 1.660651 | 1.660405 | 0.000246 |
+
+For 8 samples, Wake-utilization PiSSA is the first setting that slightly beats
+the tuned ordinary standard LoRA baseline (`1.705007` at `lr=5e-5`, 32
+updates). The margin is small (`0.001876` NLL), so it should be treated as a
+promising direction rather than a final claim.
+
+The dynamics are more interesting than the raw margin: PiSSA standard has very
+large tail gradient norms and visible final-best drift, while Wake+PiSSA keeps
+the final checkpoint very close to the best checkpoint. This supports the
+mechanism that Wake is acting as a late-training utilization/stability control
+when the adapter initialization is more expressive.
+
+`lr=7.5e-5` with PiSSA is too aggressive: Wake reduces the damage but does not
+beat the `5e-5` setting.

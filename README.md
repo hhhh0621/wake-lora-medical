@@ -239,6 +239,13 @@ claim is therefore narrower: it substantially reduces late-training drift when
 the 8-sample set is reused for longer budgets. See
 `docs/method_note.md` for the full positive and negative ablations.
 
+The most promising LoRA-side trick so far is PiSSA initialization. With
+`--lora_init pissa_niter_4`, `learning_rate=5e-5`, and 32 updates,
+Wake-utilization reaches `1.703131` mean NLL on 8 samples, slightly better than
+the tuned ordinary standard LoRA baseline (`1.705007`). The margin is still
+small, but the final-best gap drops to `0.002777`, making it a useful direction
+for the next round.
+
 Run the candidate matrix with:
 
 ```bash
@@ -249,6 +256,14 @@ HF_ENDPOINT=https://hf-mirror.com PYTHONPATH=src /opt/conda/bin/python scripts/r
   --methods standard,wake_utilization \
   --target_updates 32 \
   --learning_rate 1e-4
+```
+
+Summarize training dynamics for any matrix prefix:
+
+```bash
+PYTHONPATH=src /opt/conda/bin/python scripts/summarize_training_dynamics.py \
+  --prefix pissa_lr5e5_n8_u32 \
+  --output_dir reports/pissa_lr5e5_n8_u32
 ```
 
 `wake_reliable` uses the same schedule but only applies the segment memory loss

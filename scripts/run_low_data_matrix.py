@@ -287,11 +287,25 @@ def gated_value(sample_count: int, value: float, max_samples: int) -> float:
     return 0.0
 
 
+def lora_variant_suffix(args: argparse.Namespace) -> str:
+    parts = []
+    if args.lora_use_rslora:
+        parts.append("rslora")
+    if args.lora_use_dora:
+        parts.append("dora")
+    if args.lora_init != "default":
+        parts.append(f"init{args.lora_init}".replace(".", "p").replace("_", ""))
+    if not parts:
+        return ""
+    return "_" + "_".join(parts)
+
+
 def output_dir_name(
     prefix: str,
     samples: int,
     seed: int,
     method: str,
+    lora_variant: str,
     lambda_kl: float,
     lambda_segment: float,
     lambda_self_reuse: float = 0.0,
@@ -304,7 +318,7 @@ def output_dir_name(
 ) -> str:
     kl_tag = f"kl{lambda_kl:.5g}".replace(".", "p")
     seg_tag = f"seg{lambda_segment:.5g}".replace(".", "p")
-    name = f"{prefix}_n{samples}_s{seed}_{method}_{kl_tag}_{seg_tag}"
+    name = f"{prefix}_n{samples}_s{seed}_{method}{lora_variant}_{kl_tag}_{seg_tag}"
     if lambda_self_reuse > 0:
         self_tag = f"sr{lambda_self_reuse:.5g}".replace(".", "p")
         name = f"{name}_{self_tag}"
@@ -479,6 +493,7 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         samples,
         seed,
         method,
+        lora_variant_suffix(args),
         float(lambda_kl),
         lambda_segment,
         lambda_self_reuse,
@@ -509,6 +524,14 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(args.batch_size),
         "--gradient_accumulation_steps",
         str(args.gradient_accumulation_steps),
+        "--lora_r",
+        str(args.lora_r),
+        "--lora_alpha",
+        str(args.lora_alpha),
+        "--lora_dropout",
+        str(args.lora_dropout),
+        "--lora_init",
+        args.lora_init,
         "--eval_max_batches",
         str(args.eval_max_batches),
         "--num_workers",
@@ -553,6 +576,10 @@ def build_command(args: argparse.Namespace, samples: int, seed: int, method: str
         str(seed),
         *spec["skip"],
     ]
+    if args.lora_use_rslora:
+        cmd.append("--lora_use_rslora")
+    if args.lora_use_dora:
+        cmd.append("--lora_use_dora")
     if args.learning_rate is not None:
         cmd.extend(["--learning_rate", str(args.learning_rate)])
     return cmd, out_dir
@@ -577,6 +604,12 @@ def main() -> None:
     )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    parser.add_argument("--lora_r", type=int, default=16)
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_use_rslora", action="store_true")
+    parser.add_argument("--lora_use_dora", action="store_true")
+    parser.add_argument("--lora_init", default="default")
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--eval_max_batches", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)

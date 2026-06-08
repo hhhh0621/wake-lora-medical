@@ -375,12 +375,22 @@ class WakeLoraLoss:
             + self.lambda_simplex * simplex_loss
             + self.lambda_simplex_ce * simplex_ce
         )
+        segment_weighted = self.lambda_segment * segment_loss
+        consistency_weighted = self.lambda_consistency * consistency_loss
+        simplex_weighted = self.lambda_simplex * simplex_loss
+        simplex_ce_weighted = self.lambda_simplex_ce * simplex_ce
+        regularizer_total = wake_kl + segment_weighted + consistency_weighted + simplex_weighted + simplex_ce_weighted
 
         metrics = {
             "loss": float(total.detach().cpu()),
             "ce_lora": float(ce_lora.detach().cpu()),
             "wake_kl": float(wake_kl.detach().cpu()),
             "consistency_loss": float(consistency_loss.detach().cpu()),
+            "segment_weighted": float(segment_weighted.detach().cpu()),
+            "consistency_weighted": float(consistency_weighted.detach().cpu()),
+            "simplex_weighted": float(simplex_weighted.detach().cpu()),
+            "simplex_ce_weighted": float(simplex_ce_weighted.detach().cpu()),
+            "regularizer_total": float(regularizer_total.detach().cpu()),
             "ce_base": float(masked_mean(ce_base_tok, mask).detach().cpu()),
             "alpha_mean": float(masked_mean(alpha, mask).detach().cpu()),
             "ce_reuse_weight_mean": float(masked_mean(ce_weight, mask).detach().cpu()),

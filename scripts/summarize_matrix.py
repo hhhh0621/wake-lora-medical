@@ -165,7 +165,7 @@ def collect_rows(prefix: str, include_legacy: bool = False) -> list[dict]:
                         "path": str(path.relative_to(ROOT)),
                     }
                 )
-        result_key = "standard_lora" if method == "standard" else "wake_lora"
+        result_key = "standard_lora" if method.startswith("standard") else "wake_lora"
         result = data.get("results", {}).get(result_key)
         if not result:
             continue

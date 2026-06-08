@@ -54,6 +54,9 @@ def attach_lora(
     r: int,
     alpha: int,
     dropout: float,
+    use_rslora: bool = False,
+    use_dora: bool = False,
+    init_lora_weights: str | bool = True,
     target_modules: list[str] | None = None,
 ) -> Any:
     config = LoraConfig(
@@ -63,6 +66,9 @@ def attach_lora(
         bias="none",
         task_type=TaskType.CAUSAL_LM,
         target_modules=target_modules or QWEN_LORA_TARGETS,
+        use_rslora=use_rslora,
+        use_dora=use_dora,
+        init_lora_weights=init_lora_weights,
     )
     model = get_peft_model(model, config)
     return model
@@ -77,6 +83,9 @@ def prepare_model_and_tokenizer(
     lora_r: int,
     lora_alpha: int,
     lora_dropout: float,
+    lora_use_rslora: bool = False,
+    lora_use_dora: bool = False,
+    lora_init: str | bool = True,
 ) -> tuple[Any, Any, dict[str, Any]]:
     tokenizer = load_tokenizer(model_path)
     model = load_causal_lm(
@@ -86,7 +95,15 @@ def prepare_model_and_tokenizer(
         gradient_checkpointing=gradient_checkpointing,
     )
     if use_lora:
-        model = attach_lora(model, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
+        model = attach_lora(
+            model,
+            r=lora_r,
+            alpha=lora_alpha,
+            dropout=lora_dropout,
+            use_rslora=lora_use_rslora,
+            use_dora=lora_use_dora,
+            init_lora_weights=lora_init,
+        )
     else:
         for param in model.parameters():
             param.requires_grad_(False)

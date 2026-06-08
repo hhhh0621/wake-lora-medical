@@ -49,6 +49,9 @@ def add_common_training_args(parser: ArgumentParser) -> None:
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_use_rslora", action="store_true")
+    parser.add_argument("--lora_use_dora", action="store_true")
+    parser.add_argument("--lora_init", type=str, default="default")
     parser.add_argument("--lambda_kl", type=float, default=0.1)
     parser.add_argument("--lambda_ce_reuse", type=float, default=0.0)
     parser.add_argument("--lambda_self_reuse", type=float, default=0.0)
@@ -176,6 +179,35 @@ def _standard_lora_loss(model: Any, batch: dict[str, torch.Tensor]) -> tuple[tor
     }
 
 
+def normalize_lora_init(value: str) -> str | bool:
+    if value == "default":
+        return True
+    if value.lower() in {"false", "none"}:
+        return False
+    return value
+
+
+@torch.no_grad()
+def trainable_parameter_stats(model: Any) -> dict[str, float]:
+    sq_sum = 0.0
+    abs_sum = 0.0
+    count = 0
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+        value = param.detach().float()
+        sq_sum += float((value * value).sum().cpu())
+        abs_sum += float(value.abs().sum().cpu())
+        count += value.numel()
+    denom = max(count, 1)
+    return {
+        "trainable_param_count": float(count),
+        "trainable_param_norm": math.sqrt(sq_sum),
+        "trainable_param_rms": math.sqrt(sq_sum / denom),
+        "trainable_param_abs_mean": abs_sum / denom,
+    }
+
+
 def wake_regularizer_multiplier(
     global_step: int,
     total_updates: int,
@@ -210,6 +242,9 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        lora_use_rslora=args.lora_use_rslora,
+        lora_use_dora=args.lora_use_dora,
+        lora_init=normalize_lora_init(args.lora_init),
     )
     logger.info("Parameter stats: %s", count_trainable_parameters(model))
     train_loader, eval_loader = build_dataloaders(args, tokenizer)
@@ -295,7 +330,7 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
             should_step = micro_step % args.gradient_accumulation_steps == 0
             should_step = should_step or micro_step == len(train_loader)
             if should_step:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -310,8 +345,10 @@ def train_lora_method(args: Namespace, method: str) -> dict[str, Any]:
                         "epoch": epoch + 1,
                         "global_step": global_step,
                         "lr": scheduler.get_last_lr()[0],
+                        "grad_norm": float(grad_norm.detach().cpu()),
                     }
                 )
+                avg_metrics.update(trainable_parameter_stats(model))
                 append_jsonl(avg_metrics, out_dir / "train_metrics.jsonl")
                 progress.set_postfix(loss=f"{avg_metrics.get('loss', 0.0):.4f}")
 
